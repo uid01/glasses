@@ -1,0 +1,64 @@
+name: iOS Sideload Build (unsigned .ipa)
+
+# Produces an UNSIGNED .ipa artifact for installing on a real device without
+# owning a Mac, via a sideloading tool (Sideloadly, AltStore, etc.) that
+# does its own re-signing at install time using a free or paid Apple ID.
+#
+# This is deliberately a separate, manually-triggered workflow from
+# ios-build.yml (which validates compilation on every push via the
+# Simulator) -- an unsigned device build is only useful on demand, not on
+# every commit, and device builds take meaningfully longer than simulator
+# builds.
+#
+# The app requires no paid-only capabilities (no push notifications, App
+# Groups, iCloud, etc. -- just the standard NSLocalNetworkUsageDescription
+# permission), so a free personal Apple ID is sufficient for the sideload
+# tool to sign and install it. Free-account signatures expire after 7 days;
+# re-run the sideload tool (no need to rebuild here) to reinstall.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-unsigned-ipa:
+    name: Build unsigned .ipa (device, unsigned)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Build for device (no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios-client/XrealBridge.xcodeproj \
+            -scheme XrealBridge \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package as .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/XrealBridge.app"
+          test -d "$APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r XrealBridge-unsigned.ipa Payload
+          echo "Built: $(ls -lh XrealBridge-unsigned.ipa)"
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XrealBridge-unsigned-ipa
+          path: XrealBridge-unsigned.ipa
+          retention-days: 14
