@@ -1,0 +1,39 @@
+{
+  "name": "XrealBridge (personal builds)",
+  "subtitle": "PC-to-iOS XREAL display + trackpad bridge",
+  "description": "Auto-published dev builds of the XrealBridge iOS client. Unsigned -- AltStore/SideStore re-signs at install/update time.",
+  "iconURL": "https://raw.githubusercontent.com/uid01/glasses/main/distribution/icon.png",
+  "website": "https://github.com/uid01/glasses",
+  "tintColor": "40c8ff",
+  "nsfw": false,
+  "apps": [
+    {
+      "name": "XrealBridge",
+      "bundleIdentifier": "com.xrealbridge.XrealBridge",
+      "developerName": "uid01",
+      "subtitle": "XREAL display + trackpad bridge",
+      "localizedDescription": "Streams the PC desktop to XREAL glasses via USB-C and turns the iPhone screen into a wireless trackpad. Personal dev build, unsigned -- see shared-protocol/PROTOCOL.md in the source repo for the wire format.",
+      "iconURL": "https://raw.githubusercontent.com/uid01/glasses/main/distribution/icon.png",
+      "tintColor": "40c8ff",
+      "category": "utilities",
+      "versions": [
+        {
+          "version": "1.0",
+          "buildVersion": "3",
+          "date": "2026-08-10T17:23:45Z",
+          "localizedDescription": "Build 3 (commit c62f35038c1277677b7d91394c285e2eecd5cfec)",
+          "downloadURL": "https://raw.githubusercontent.com/uid01/glasses/main/distribution/XrealBridge-unsigned.ipa",
+          "size": 81320,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocalNetworkUsageDescription": "Connects to your PC over local Wi-Fi/LAN to stream its screen and send trackpad input."
+        }
+      }
+    }
+  ],
+  "news": []
+}
