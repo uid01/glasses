@@ -88,6 +88,33 @@ There's no discovery mechanism in the wire protocol (see
   `pressesEnded`, independent of whether the on-screen keyboard is
   summoned.
 
+## Auto-updating builds during active development (AltStore)
+
+Re-uploading a fresh `.ipa` to a signing service (Signulous, Sideloadly)
+by hand every time the code changes gets old fast. For rapid iteration,
+set up AltStore once instead:
+
+1. Install **AltServer** on this PC ([altstore.io](https://faq.altstore.io/getting-started/installation)) and pair it with your iPhone over USB once (it'll ask for an Apple ID -- a free one is fine, same as any sideload tool).
+2. AltServer installs the **AltStore** app on your phone. Open it.
+3. In AltStore, add this repo's auto-updating source (Sources tab -> "+"):
+   ```
+   https://github.com/uid01/glasses/releases/download/sideload/source.json
+   ```
+4. Install "XrealBridge" from that source.
+
+After that: every push that touches `ios-client/**` triggers
+`.github/workflows/ios-sideload-build.yml`, which builds a fresh unsigned
+`.ipa`, bumps the build number, and republishes it to that same release
+URL. AltStore will show an "Update" button on its own -- no more manual
+re-signing per build. Free-account signatures still expire after 7 days;
+AltServer (or SideStore's phone-only self-refresh, if you switch to that
+later) handles re-signing the *existing* install automatically as long as
+it can periodically reach the device -- that's separate from, and doesn't
+require, a rebuild here.
+
+Signulous/Sideloadly still work fine any time you just want a one-off
+install without setting any of this up.
+
 ## Keeping the connection alive
 
 Two things matter here because you're looking through the glasses, not at

@@ -1,28 +1,43 @@
-name: iOS Sideload Build (unsigned .ipa)
+name: iOS Sideload Build (unsigned .ipa + AltStore source)
 
-# Produces an UNSIGNED .ipa artifact for installing on a real device without
-# owning a Mac, via a sideloading tool (Sideloadly, AltStore, etc.) that
-# does its own re-signing at install time using a free or paid Apple ID.
+# Produces an UNSIGNED .ipa for installing on a real device without owning
+# a Mac, and publishes it to a stable GitHub Release along with an
+# AltStore-compatible source.json (https://faq.altstore.io/developers/make-a-source).
 #
-# This is deliberately a separate, manually-triggered workflow from
-# ios-build.yml (which validates compilation on every push via the
-# Simulator) -- an unsigned device build is only useful on demand, not on
-# every commit, and device builds take meaningfully longer than simulator
-# builds.
+# One-time setup on the phone: add
+#   https://github.com/uid01/glasses/releases/download/sideload/source.json
+# as a custom source in AltStore (or SideStore). After that, every push
+# that touches the iOS client bumps the build number and republishes to
+# the SAME release/asset URLs, so AltStore just shows an "Update" button --
+# no more re-uploading to a signing service by hand for every rebuild.
+# Signulous/Sideloadly still work fine as an alternative any time; this is
+# just the low-friction path for rapid iteration.
 #
 # The app requires no paid-only capabilities (no push notifications, App
-# Groups, iCloud, etc. -- just the standard NSLocalNetworkUsageDescription
-# permission), so a free personal Apple ID is sufficient for the sideload
-# tool to sign and install it. Free-account signatures expire after 7 days;
-# re-run the sideload tool (no need to rebuild here) to reinstall.
+# Groups, iCloud -- just the standard NSLocalNetworkUsageDescription
+# permission), so a free personal Apple ID is sufficient for AltServer to
+# sign it. Free-account signatures still expire after 7 days; AltServer
+# auto-refreshes those in the background as long as it (or SideStore's
+# self-refresh) can periodically reach the device -- that's a signing
+# renewal, separate from this workflow, which only ever ships new *builds*.
 
 on:
+  push:
+    paths:
+      - "ios-client/**"
+      - "shared-protocol/PROTOCOL.md"
+      - ".github/workflows/ios-sideload-build.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-unsigned-ipa:
-    name: Build unsigned .ipa (device, unsigned)
+  build-and-publish:
+    name: Build unsigned .ipa and publish AltStore source
     runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout
@@ -44,6 +59,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            MARKETING_VERSION="1.0" \
             clean build
 
       - name: Package as .ipa
@@ -56,7 +73,74 @@ jobs:
           zip -r XrealBridge-unsigned.ipa Payload
           echo "Built: $(ls -lh XrealBridge-unsigned.ipa)"
 
-      - name: Upload .ipa artifact
+      - name: Generate AltStore source.json
+        run: |
+          set -euo pipefail
+          SIZE=$(wc -c < XrealBridge-unsigned.ipa | tr -d ' ')
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          REPO="uid01/glasses"
+          BASE_URL="https://github.com/${REPO}/releases/download/sideload"
+          ICON_URL="https://raw.githubusercontent.com/${REPO}/main/distribution/icon.png"
+
+          cat > distribution/source.json <<JSON
+          {
+            "name": "XrealBridge (personal builds)",
+            "subtitle": "PC-to-iOS XREAL display + trackpad bridge",
+            "description": "Auto-published dev builds of the XrealBridge iOS client. Unsigned -- AltStore/SideStore re-signs at install/update time.",
+            "iconURL": "${ICON_URL}",
+            "website": "https://github.com/${REPO}",
+            "tintColor": "40c8ff",
+            "nsfw": false,
+            "apps": [
+              {
+                "name": "XrealBridge",
+                "bundleIdentifier": "com.xrealbridge.XrealBridge",
+                "developerName": "uid01",
+                "subtitle": "XREAL display + trackpad bridge",
+                "localizedDescription": "Streams the PC desktop to XREAL glasses via USB-C and turns the iPhone screen into a wireless trackpad. Personal dev build, unsigned -- see shared-protocol/PROTOCOL.md in the source repo for the wire format.",
+                "iconURL": "${ICON_URL}",
+                "tintColor": "40c8ff",
+                "category": "utilities",
+                "versions": [
+                  {
+                    "version": "1.0",
+                    "buildVersion": "${{ github.run_number }}",
+                    "date": "${DATE}",
+                    "localizedDescription": "Build ${{ github.run_number }} (commit ${{ github.sha }})",
+                    "downloadURL": "${BASE_URL}/XrealBridge-unsigned.ipa",
+                    "size": ${SIZE},
+                    "minOSVersion": "17.0"
+                  }
+                ],
+                "appPermissions": {
+                  "entitlements": [],
+                  "privacy": {
+                    "NSLocalNetworkUsageDescription": "Connects to your PC over local Wi-Fi/LAN to stream its screen and send trackpad input."
+                  }
+                }
+              }
+            ],
+            "news": []
+          }
+          JSON
+          cat distribution/source.json
+
+      - name: Publish release + assets
+        run: |
+          set -euo pipefail
+          REPO="uid01/glasses"
+          if ! gh release view sideload --repo "$REPO" >/dev/null 2>&1; then
+            gh release create sideload --repo "$REPO" \
+              --title "Sideload build (unsigned, auto-updating)" \
+              --notes "Unsigned iOS client build for AltStore/SideStore/Signulous. Source: https://github.com/${REPO}/releases/download/sideload/source.json. Always overwritten in place by CI -- do not link to a specific commit's build from here, use the source.json for update tracking."
+          fi
+          gh release upload sideload XrealBridge-unsigned.ipa --repo "$REPO" --clobber
+          gh release upload sideload distribution/source.json --repo "$REPO" --clobber
+          echo "Published build ${{ github.run_number }}:"
+          echo "  ipa:        https://github.com/${REPO}/releases/download/sideload/XrealBridge-unsigned.ipa"
+          echo "  source.json: https://github.com/${REPO}/releases/download/sideload/source.json"
+
+      - name: Upload .ipa as workflow artifact too
         uses: actions/upload-artifact@v4
         with:
           name: XrealBridge-unsigned-ipa
