@@ -133,6 +133,30 @@ that would otherwise have caused a real interop mismatch invisible to
 either side's unit tests (since each side would just be internally
 consistent with its own, differently-wrong, interpretation).
 
+CI RESULTS (github.com/uid01/glasses, workflow: .github/workflows/ios-build.yml)
+------------------------------------------------------------------------
+Run 1 (commit 9fbdfd4, initial push): FAILED at build. One compile error,
+in exactly the file flagged beforehand as highest-risk for unverified API
+signatures (H264Decoder.swift:260) — `CMBlockBufferCreateWithMemoryBlock`'s
+`flags:` parameter takes a bare UInt32 in this SDK, not
+`CMBlockBufferFlags(rawValue:)`. The rest of the hand-written
+`project.pbxproj` parsed and built without issue up to that point — real
+evidence the file-system-synchronized-group project structure is sound.
+
+Run 2 (commit 2c51bfa, fix applied): build step PASSED. Failed at the test
+step instead — "requested device could not be found" for destination
+`iPhone 15`. Not a code bug: the macos-15 runner image only ships iPhone 16+
+simulator runtimes.
+
+Run 3 (commit 452c41b, destination changed to iPhone 16): PASSED
+completely — build succeeded and all XrealBridgeTests (packet round-trips,
+fragment reassembly) passed on a real Xcode/simulator environment.
+https://github.com/uid01/glasses/actions/runs/31404311748
+
+This is the first real, independent confirmation that the iOS side
+actually compiles — everything about it before this point was written
+blind (no local Mac/Xcode) and only cross-checked by static review.
+
 REMAINING WORK / NOT DONE THIS SESSION
 ------------------------------------------------------------------------
 - Nothing has been pushed to a physical XREAL glasses + real iPhone yet —

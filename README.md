@@ -6,12 +6,18 @@ an iPhone, which drives XREAL AR glasses as a dedicated external display
 into a wireless trackpad + keyboard for the PC.
 
 > **Status note (read before relying on this):** the iOS client was written
-> without access to a Mac — there is no local compile/run verification for
-> it, only a GitHub Actions CI build once pushed. The PC host, by contrast,
-> was built and smoke-tested for real on the machine that authored it
-> (real RTX GPU, real ffmpeg/NVENC, real UDP traffic). See
-> `overnight_build_log.txt` for exactly what was and wasn't verified, and
-> each subproject's README for specifics.
+> without access to a Mac. It's now confirmed to actually **compile and
+> pass its unit tests** via GitHub Actions CI
+> ([latest run](https://github.com/uid01/glasses/actions)) — that CI run
+> also caught and required fixing one real API-signature error, which is
+> exactly the kind of thing "written blind" risks. What CI *cannot* cover —
+> real VideoToolbox decode behavior, external-display/glasses routing, and
+> actual PC↔phone network interop — is still unverified and needs a
+> physical iPhone + XREAL glasses. The PC host, by contrast, was built and
+> smoke-tested for real on the machine that authored it (real RTX GPU, real
+> ffmpeg/NVENC fallback, real UDP traffic, ffprobe-confirmed decodable
+> output). See `overnight_build_log.txt` for the full narrative and each
+> subproject's README for specifics.
 
 ## Layout
 
