@@ -19,11 +19,11 @@
       "versions": [
         {
           "version": "1.0",
-          "buildVersion": "3",
-          "date": "2026-08-10T17:23:45Z",
-          "localizedDescription": "Build 3 (commit c62f35038c1277677b7d91394c285e2eecd5cfec)",
+          "buildVersion": "4",
+          "date": "2026-08-10T17:41:22Z",
+          "localizedDescription": "Build 4 (commit 826c312ce54b356ab725618e71cd930a96dd700a)",
           "downloadURL": "https://raw.githubusercontent.com/uid01/glasses/main/distribution/XrealBridge-unsigned.ipa",
-          "size": 81320,
+          "size": 81998,
           "minOSVersion": "17.0"
         }
       ],
