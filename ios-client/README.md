@@ -98,7 +98,7 @@ set up AltStore once instead:
 2. AltServer installs the **AltStore** app on your phone. Open it.
 3. In AltStore, add this repo's auto-updating source (Sources tab -> "+"):
    ```
-   https://github.com/uid01/glasses/releases/download/sideload/source.json
+   https://raw.githubusercontent.com/uid01/glasses/main/distribution/source.json
    ```
 4. Install "XrealBridge" from that source.
 
