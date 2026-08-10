@@ -63,7 +63,7 @@ jobs:
             -project ios-client/XrealBridge.xcodeproj \
             -scheme XrealBridge \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             test
