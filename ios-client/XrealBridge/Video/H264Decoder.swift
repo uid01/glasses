@@ -257,7 +257,7 @@ final class H264Decoder {
             customBlockSource: nil,
             offsetToData: 0,
             dataLength: avcc.count,
-            flags: CMBlockBufferFlags(rawValue: 0),
+            flags: 0,
             blockBufferOut: &blockBuffer
         )
         guard createStatus == kCMBlockBufferNoErr, let buffer = blockBuffer else { return nil }
