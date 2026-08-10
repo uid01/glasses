@@ -90,6 +90,12 @@ you're debugging an interop issue, start there.
   on the router/AP — a lot of "guest" Wi-Fi networks block device-to-device
   traffic, which will look exactly like this symptom). Check the PC host
   console log for whether a Handshake was even received.
+- **Connection keeps dropping.** The app keeps the phone's screen awake
+  and auto-reconnects with backoff on an unexpected drop (see
+  `ios-client/README.md#keeping-the-connection-alive`) — if it's still
+  dropping after that, check Wi-Fi client isolation (below) and Low Power
+  Mode, both of which can throttle/block the background UDP traffic this
+  app depends on.
 - **High latency / stutter.** Wired 5GHz or 6GHz Wi-Fi with the PC on
   Ethernet will beat any wireless-to-wireless hop by a wide margin at
   1080p/60. `-tune ll -zerolatency 1` on the ffmpeg encode is already set

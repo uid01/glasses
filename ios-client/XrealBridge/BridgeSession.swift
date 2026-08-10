@@ -41,6 +41,16 @@ final class BridgeSession {
 
     private weak var externalDisplayView: ExternalDisplayView?
 
+    /// Auto-reconnect state for unexpected drops (heartbeat timeout, peer
+    /// Disconnect). Exponential backoff so a PC that's genuinely offline
+    /// doesn't get hammered, reset to the base delay on every successful
+    /// handshake. This does NOT apply to a user-initiated `disconnect()` --
+    /// that path cancels any pending reconnect explicitly.
+    private var reconnectWorkItem: DispatchWorkItem?
+    private static let baseReconnectDelaySeconds: TimeInterval = 1.0
+    private static let maxReconnectDelaySeconds: TimeInterval = 10.0
+    private var reconnectDelay: TimeInterval = BridgeSession.baseReconnectDelaySeconds
+
     /// PC IP the user entered, persisted across launches. Ports are the
     /// PROTOCOL.md defaults (9000/9001/9002); the protocol doc notes ports
     /// are configurable at runtime, but this app doesn't currently expose
@@ -55,8 +65,29 @@ final class BridgeSession {
     func connect(host: String) {
         guard !host.isEmpty else { return }
         pcHost = host
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+
+        // Ensure any previous ControlChannel (e.g. from a prior connect()
+        // call made while already connected -- the IP-entry alert can be
+        // reopened at any time) is fully torn down rather than just
+        // dereferenced: an un-cancelled DispatchSourceTimer keeps itself
+        // (and its captured closure) alive even with no other references,
+        // which would otherwise leak a heartbeat/watchdog timer pair per
+        // reconnect.
+        controlChannel?.disconnect()
         tearDownNetworking()
         status = .connecting
+
+        // The whole point of this app is that the user is looking through
+        // the glasses, not touching the phone -- left to its own devices
+        // iOS auto-locks the screen after ~30s of no touch, which suspends
+        // this app's background timers/networking and silently kills the
+        // connection. Keep the screen awake for as long as we intend to
+        // stay connected; only a user-initiated disconnect() clears this.
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
 
         let control = ControlChannel(host: host, port: 9000)
         control.delegate = self
@@ -69,9 +100,35 @@ final class BridgeSession {
     }
 
     func disconnect() {
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+        reconnectDelay = BridgeSession.baseReconnectDelaySeconds
         controlChannel?.disconnect()
         tearDownNetworking()
         status = .disconnected
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    /// Schedules a reconnect attempt after an UNEXPECTED drop (heartbeat
+    /// timeout or a Disconnect packet from the peer) -- never called for a
+    /// user-initiated disconnect(), which cancels any pending work here
+    /// instead. Exponential backoff, capped, reset on next successful
+    /// handshake.
+    private func scheduleAutoReconnect() {
+        guard !pcHost.isEmpty else { return }
+        reconnectWorkItem?.cancel()
+
+        let delay = reconnectDelay
+        reconnectDelay = min(reconnectDelay * 2, BridgeSession.maxReconnectDelaySeconds)
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.connect(host: self.pcHost)
+        }
+        reconnectWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func tearDownNetworking() {
@@ -123,11 +180,13 @@ extension BridgeSession: ControlChannelDelegate {
         videoReceiver = receiver
 
         status = .connected(width: width, height: height, fps: fps)
+        reconnectDelay = BridgeSession.baseReconnectDelaySeconds
     }
 
     func controlChannelDidDisconnect(_ channel: ControlChannel, reason: String) {
         tearDownNetworking()
         status = .disconnected
+        scheduleAutoReconnect()
     }
 }
 

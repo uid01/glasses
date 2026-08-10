@@ -88,6 +88,26 @@ There's no discovery mechanism in the wire protocol (see
   `pressesEnded`, independent of whether the on-screen keyboard is
   summoned.
 
+## Keeping the connection alive
+
+Two things matter here because you're looking through the glasses, not at
+the phone screen, so nothing is touching the display:
+
+- The app disables the iOS idle timer (`UIApplication.isIdleTimerDisabled`)
+  for as long as it intends to stay connected, so the phone won't auto-lock
+  and suspend the app's networking mid-session. It's re-enabled on an
+  explicit disconnect.
+- If a session does drop anyway (Wi-Fi blip, PC restarted, etc.),
+  `BridgeSession` automatically retries the handshake with exponential
+  backoff (1s, 2s, 4s... capped at 10s, reset on the next successful
+  connect) rather than sitting disconnected until you manually reopen the
+  IP prompt.
+
+If it's still dropping repeatedly after this, the next things to check are
+Wi-Fi client isolation on your router (see the top-level README's
+Troubleshooting section) and whether Low Power Mode is throttling
+background network activity.
+
 ## Running the unit tests
 
 `XrealBridgeTests/ProtocolTests.swift` covers packet encode/decode round
