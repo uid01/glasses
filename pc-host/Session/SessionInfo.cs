@@ -12,6 +12,17 @@ public sealed class SessionInfo
     public required uint SessionId { get; init; }
     public required IPAddress ClientAddress { get; init; }
     public required int VideoPort { get; init; }
+
+    /// <summary>
+    /// The client's source address+port for the Handshake that created this session --
+    /// i.e. where its Control-channel <see cref="UDPConnection"/>-equivalent is actually
+    /// listening. Needed to proactively send Heartbeat packets back to the client (per
+    /// PROTOCOL.md, Heartbeat is bidirectional); ClientAddress + a fixed control port isn't
+    /// enough because the client's UDP socket for Handshake/Heartbeat traffic uses an
+    /// ephemeral source port, not the well-known control port -- that ephemeral port is what
+    /// a reply must be addressed to.
+    /// </summary>
+    public required IPEndPoint ControlEndpoint { get; init; }
     public required ushort Width { get; init; }
     public required ushort Height { get; init; }
     public required byte Fps { get; init; }

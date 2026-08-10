@@ -62,6 +62,12 @@ any session created that way also uses the mock frame source instead of ffmpeg.
   a capture pipeline for that session.
 - The client should send `Heartbeat` (or any `InputEvent`) at least once every 5 seconds, or the
   host tears the session down (kills its ffmpeg process, per PROTOCOL.md's idle-timeout rule).
+- The host also proactively sends `Heartbeat` back to every active session's control endpoint
+  once per second (`Network/ControlServer.cs`'s `SendHeartbeatsLoopAsync`). This was missed
+  initially -- real-device testing showed the client reconnecting in a tight ~5-6s loop because
+  the client's own watchdog only tracks Control-channel traffic it *receives*, and with the host
+  never sending anything back after the initial `HandshakeAck`, that watchdog had nothing to see.
+  Heartbeat is bidirectional per PROTOCOL.md; this now actually implements that.
   The auto-started `--mock` session is exempt from this timeout, since it has no real client
   sending it heartbeats.
 - `Disconnect` tears the session down immediately.

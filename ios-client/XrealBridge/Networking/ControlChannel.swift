@@ -77,6 +77,19 @@ final class ControlChannel {
         }
     }
 
+    /// Credits non-Control-channel traffic (currently: an arriving video frame) as proof the
+    /// connection is alive, so the watchdog doesn't fire just because the PC's own Heartbeat
+    /// happened to be delayed/dropped on a given tick while video is visibly still flowing.
+    /// Real-world testing showed the watchdog firing every ~5-6s in a loop because the PC
+    /// wasn't sending Heartbeats at all at the time -- fixed on the PC side too, but this
+    /// makes the client's liveness check robust to that class of bug on either side rather
+    /// than depending entirely on one packet type on one channel.
+    func noteExternalLiveness() {
+        queue.async { [weak self] in
+            self?.lastReceivedAt = Date()
+        }
+    }
+
     func disconnect() {
         queue.async { [weak self] in
             guard let self = self else { return }

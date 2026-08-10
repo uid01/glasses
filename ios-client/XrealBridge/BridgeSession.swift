@@ -197,6 +197,7 @@ extension BridgeSession: VideoReceiverDelegate {
         ptsMicros: UInt64,
         isKeyframe: Bool
     ) {
+        controlChannel?.noteExternalLiveness()
         decoder.decode(accessUnit: bytes, presentationTimeMicros: ptsMicros, isKeyframe: isKeyframe)
     }
 }

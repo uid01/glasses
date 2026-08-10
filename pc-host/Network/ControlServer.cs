@@ -33,6 +33,11 @@ public sealed class ControlServer : IDisposable
     public async Task RunAsync(CancellationToken ct)
     {
         Console.WriteLine($"[control] listening on UDP {((IPEndPoint)_listener.Client.LocalEndPoint!).Port}");
+        await Task.WhenAll(ReceiveLoopAsync(ct), SendHeartbeatsLoopAsync(ct)).ConfigureAwait(false);
+    }
+
+    private async Task ReceiveLoopAsync(CancellationToken ct)
+    {
         while (!ct.IsCancellationRequested)
         {
             UdpReceiveResult result;
@@ -50,6 +55,50 @@ public sealed class ControlServer : IDisposable
             }
 
             HandleDatagram(result.Buffer, result.RemoteEndPoint);
+        }
+    }
+
+    /// <summary>
+    /// Per PROTOCOL.md, Heartbeat is bidirectional ("sent every 1s on an idle connection" by
+    /// either side). This was originally missed -- the host only ever *received* Heartbeats
+    /// and never sent any back, which starves the client's own watchdog (it tracks liveness
+    /// from Control-channel traffic it receives FROM the host) of anything to see after the
+    /// initial HandshakeAck, causing the client to self-disconnect and reconnect roughly every
+    /// 5-6s even though the client's own outbound Heartbeats were reaching the host just fine.
+    /// </summary>
+    private async Task SendHeartbeatsLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            foreach (var session in _sessions.All)
+            {
+                SendHeartbeatTo(session);
+            }
+        }
+    }
+
+    private void SendHeartbeatTo(SessionInfo session)
+    {
+        var heartbeat = new Protocol.Heartbeat { SessionId = session.SessionId };
+        Span<byte> buffer = stackalloc byte[Protocol.Heartbeat.WireSize];
+        heartbeat.WriteTo(buffer);
+        try
+        {
+            _listener.Send(buffer, session.ControlEndpoint);
+        }
+        catch (SocketException)
+        {
+            // Best-effort; a send failure here just means this one heartbeat tick is lost --
+            // the next tick (1s later) will retry, and the 5s timeout window tolerates that.
         }
     }
 
@@ -99,6 +148,7 @@ public sealed class ControlServer : IDisposable
         {
             SessionId = sessionId,
             ClientAddress = remoteEndPoint.Address,
+            ControlEndpoint = remoteEndPoint,
             VideoPort = _videoPort,
             Width = width,
             Height = height,

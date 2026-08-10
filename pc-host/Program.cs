@@ -52,6 +52,11 @@ public static class Program
             {
                 SessionId = 1,
                 ClientAddress = options.MockTargetAddress,
+                // No real client is listening for this session's proactive Heartbeats (there
+                // was never a real Handshake), so this just needs to be a harmless, clearly
+                // inert placeholder -- ExemptFromTimeout above already means nothing depends
+                // on traffic actually reaching it.
+                ControlEndpoint = new IPEndPoint(IPAddress.Loopback, 1),
                 VideoPort = options.MockTargetPort,
                 Width = 1920,
                 Height = 1080,
