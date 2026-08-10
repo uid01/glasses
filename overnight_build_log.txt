@@ -1,0 +1,146 @@
+XREAL Wireless Bridge — Build Log
+==================================
+Session start: 2026-08-10
+
+ENVIRONMENT DISCOVERED
+-----------------------
+- OS: Windows 11 (win32), no git repo pre-existing, project dir was empty.
+- GPU: NVIDIA GeForce RTX 5070 Ti, driver 595.95, CUDA 13.2 (driver-level).
+- .NET 8 SDK installed (8.0.418).
+- Visual Studio 2022 Build Tools installed (MSVC C++ toolset + Windows 10 SDK
+  10.0.26100.0) — available but NOT used; see architecture decision below.
+- NVIDIA Video Codec SDK: NOT installed (requires manual NVIDIA developer
+  portal login — out of scope for automated setup).
+- cmake: NOT installed.
+- ffmpeg 8.1.2 (gyan.dev full build): installed and on PATH, built with
+  --enable-nvenc --enable-cuda-llvm --enable-ffnvcodec and ddagrab (DXGI
+  Desktop Duplication lavfi source). This became the capture/encode engine.
+- No macOS, no Xcode, no Swift toolchain anywhere on this machine (confirmed:
+  `swift --version` not found). iOS side is unverifiable locally by
+  construction — see architecture decision below.
+- git 2.52.0, gh CLI 2.92.0 present. No GitHub remote created yet (needs
+  explicit user permission before any push).
+
+SCOPE / FEASIBILITY CORRECTIONS MADE BEFORE STARTING
+-----------------------------------------------------
+The original brief asked for an "autonomous overnight" build with a fully
+compiled + tested iOS app and real hardware verification against XREAL
+glasses. Corrected expectations with the user up front, in chat, before
+writing code:
+  1. iOS app cannot be compiled or run on this Windows machine — no Mac,
+     no Xcode. Agreed path: write full native Swift source (UIWindowScene /
+     VideoToolbox / Network.framework are Apple-only APIs, no framework
+     swap avoids this), verify compilation via GitHub Actions macOS runners
+     instead of locally. User confirmed this approach.
+  2. Pushing to a GitHub remote requires explicit user permission (per
+     safety policy on actions visible to others / leaving the local
+     machine) — not done yet, will ask before pushing.
+  3. PC-side raw DXGI Desktop Duplication + raw NVENC API (as literally
+     specified) would require the NVIDIA Video Codec SDK (manual account
+     download) and cmake, neither present. User approved swapping to a
+     C# / .NET 8 + ffmpeg-subprocess architecture instead: ffmpeg's
+     `ddagrab` lavfi source wraps DXGI Desktop Duplication and its
+     `h264_nvenc` encoder drives the same NVENC hardware block, so the
+     "GPU hardware capture + hardware encode" requirement is still met,
+     just via ffmpeg-as-subprocess rather than hand-rolled COM interop —
+     and unlike the raw-API path, this one is actually buildable and
+     testable on this exact machine tonight.
+  4. Physical XREAL glasses / iPhone are not attached to this session, so
+     end-to-end hardware verification (external display actually lighting
+     up, real touch input) is out of scope regardless of platform. What IS
+     verifiable on this machine: real screen capture, real NVENC encode,
+     real UDP packet flow, protocol round-trip correctness.
+
+ARCHITECTURE DECISIONS
+-----------------------
+- Wire protocol: custom UDP protocol (not raw RTP, not full Sunshine/Moonlight
+  integration) — 3 channels (control/video/input), fragmented Annex-B H264
+  frames, documented in shared-protocol/PROTOCOL.md as the single source of
+  truth both implementations coded against independently.
+- PC host: C# / .NET 8 console app, ffmpeg subprocess for capture+encode,
+  hand-rolled UDP networking + SendInput P/Invoke for input injection.
+- iOS client: native Swift/UIKit/SwiftUI, scene-role-based external display
+  routing (UIWindowSceneSessionRoleExternalDisplay), VideoToolbox decode,
+  AVSampleBufferDisplayLayer render, Network.framework UDP.
+- Multi-agent breakdown: PC-Host-Agent and iOS-Swift-Agent worked the two
+  codebases in parallel against the shared protocol doc; coordinator
+  (this session) owns protocol spec, scaffolding, integration, and review.
+
+(Continued below as each track reports back.)
+
+PC HOST TRACK — RESULT (verified independently by coordinator, not just
+trusted from the agent's self-report)
+------------------------------------------------------------------------
+- `dotnet build PcHost.csproj`: 0 warnings, 0 errors (TreatWarningsAsErrors
+  on). Re-run by coordinator, confirmed.
+- `dotnet test PcHost.Tests`: 36/36 passed. Re-run by coordinator, confirmed.
+- Mock mode (`--mock`) verified end-to-end against `tests/mock_udp_receiver.py`:
+  fragments arrive and reassemble correctly (~62fps over 8s).
+- REAL capture path verified end-to-end on this machine's actual screen +
+  GPU: ffmpeg launches, captures via ddagrab (DXGI Desktop Duplication),
+  encodes, and streams real H264 over UDP. ffprobe confirmed the
+  reassembled stream is valid decodable H264, 1920x1080, yuv420p,
+  Constrained Baseline profile, 50/50 frames decoded.
+- Real bug #1 found & fixed: NVENC does not actually work on this dev
+  machine (RTX 5070 Ti, driver 595.95 vs ffmpeg 8.1.2's nvenc requiring
+  driver >=610.00). EncoderProbe.cs detects this at startup and falls back
+  to libx264 automatically. Capture itself (ddagrab/DXGI) stays GPU-side
+  regardless — only the encode stage is affected.
+- Real bug #2 found & fixed (the significant one): under `-tune
+  zerolatency`, both libx264 and nvenc use slice-based threading that
+  splits every picture — including IDR keyframes — into multiple slice NAL
+  units all sharing the same nal_unit_type (17 slices/picture observed on
+  this machine). The original "one VCL NAL = one frame" splitter therefore
+  fragmented each real picture into ~17 bogus frames, inflating apparent
+  frame rate ~17x and producing corrupt access units. Fixed by requesting
+  Access Unit Delimiters from the encoder (-x264-params aud=1 / -aud 1) and
+  rewriting AnnexBFrameSplitter.cs to treat AUD (NAL type 9) as the
+  authoritative per-picture boundary, with the old heuristic kept only as a
+  fallback for AUD-less streams. Verified via manual NAL analysis and a
+  dedicated regression test.
+- Spot-checked by coordinator: AnnexBFrameSplitter.cs and EncoderProbe.cs
+  read in full — logic is sound, edge cases (first-NAL-is-AUD, pipe
+  draining/deadlock avoidance) are handled correctly.
+
+IOS CLIENT TRACK — RESULT (verified independently by coordinator, not just
+trusted from the agent's self-report)
+------------------------------------------------------------------------
+- Genuinely unverifiable end-to-end in this environment (no Mac). Verified
+  by: coordinator reading the full project.pbxproj (well-formed, balanced,
+  consistent UUIDs, modern Xcode-16 synchronized-group pattern) and
+  ProtocolTypes.swift (byte-exact match to PROTOCOL.md) directly, plus the
+  agent's own cross-check against pc-host's already-written source (both
+  built in parallel against the same protocol doc).
+- Real bug found via cross-agent cross-check: pc-host's Scroll handling
+  expects dx/dy in "wheel notch" units (x120), not raw points; the iOS
+  two-finger-pan handler was scaling by raw pixel delta, which would have
+  scrolled ~20x too fast. Fixed before this was ever run.
+- CI (`.github/workflows/ios-build.yml`) builds for iphonesimulator and
+  runs XrealBridgeTests (pure-logic packet/reassembly tests) on GitHub's
+  macOS runners — this has NOT been triggered yet (no push to the remote
+  has happened as of this log entry) so CI's actual pass/fail is still
+  unknown. Treat the iOS side as "written and cross-checked, not proven to
+  compile" until CI actually runs.
+
+BOTH TRACKS — PROTOCOL BUG FOUND
+------------------------------------------------------------------------
+Both agents independently flagged the same error in PROTOCOL.md (written
+by the coordinator before either agent started): Disconnect's `reason`
+field was documented at offset 5, overlapping the 4-byte sessionId field
+(bytes 4-7). Both implementations independently resolved it to offset 8,
+and PROTOCOL.md has been corrected to match. This is the kind of doc bug
+that would otherwise have caused a real interop mismatch invisible to
+either side's unit tests (since each side would just be internally
+consistent with its own, differently-wrong, interpretation).
+
+REMAINING WORK / NOT DONE THIS SESSION
+------------------------------------------------------------------------
+- Nothing has been pushed to a physical XREAL glasses + real iPhone yet —
+  cannot be, no such hardware in this environment. First real end-to-end
+  test needs: a Mac to build+deploy the iOS app, a physical iPhone 15+,
+  XREAL glasses, and this PC (or one like it) on the same LAN.
+- iOS CI has not actually been triggered — first push to
+  git@github.com:uid01/glasses.git will be the first real compile check.
+- HEVC path unimplemented on both sides (H264 only).
+- No adaptive bitrate; fixed 8 Mbps.
+- Extended-key (numpad/arrows) nuances not implemented in SendInput mapping.

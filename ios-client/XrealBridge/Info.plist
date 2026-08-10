@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+
+	<!-- Local network + UDP access to the PC host: connecting to a
+	     LAN IP address (rather than a public host) triggers iOS 14+'s
+	     Local Network permission prompt the first time UDP traffic is
+	     sent; without this description string the OS silently denies
+	     it in some flows instead of prompting, which would present as
+	     "handshake never gets a response" with no obvious cause. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>XrealBridge connects to your PC over your local Wi-Fi/LAN network to stream its screen and send trackpad input.</string>
+
+	<!-- Master switch enabling scene-based multi-window support. Without
+	     this, UIKit never creates a second UIWindowScene for an external
+	     display no matter what UIApplicationDelegate does; everything
+	     in XrealBridgeApp.swift's role-based routing depends on this
+	     being true. No UISceneConfigurations sub-dictionary is declared
+	     here because AppDelegate.application(_:configurationForConnecting:
+	     options:) builds each UISceneConfiguration programmatically
+	     (setting .delegateClass directly), which is authoritative and
+	     does not require a matching Info.plist entry. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+	</dict>
+
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

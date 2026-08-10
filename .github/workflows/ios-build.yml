@@ -1,0 +1,69 @@
+name: iOS Build
+
+# IMPORTANT SCOPE NOTE: this workflow can only validate that the iOS client
+# COMPILES and that its pure-logic unit tests (packet encode/decode,
+# fragment reassembly) pass on the iOS Simulator. It CANNOT validate:
+#   - real H264 decode via VideoToolbox (needs real hardware/session state
+#     the Simulator doesn't meaningfully exercise),
+#   - external-display / UIWindowScene role-based routing (the Simulator
+#     has no external display to attach),
+#   - anything involving actual XREAL glasses over USB-C,
+#   - real UDP interop against the pc-host implementation.
+# Those all require manual verification on a physical iPhone with the
+# glasses attached and a reachable PC host.
+
+on:
+  push:
+    paths:
+      - "ios-client/**"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    paths:
+      - "ios-client/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and test (iOS Simulator)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show available Xcode versions
+        run: ls /Applications | grep Xcode
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Build (iOS Simulator, no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios-client/XrealBridge.xcodeproj \
+            -scheme XrealBridge \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build
+
+      - name: Run unit tests (iOS Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios-client/XrealBridge.xcodeproj \
+            -scheme XrealBridge \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            test

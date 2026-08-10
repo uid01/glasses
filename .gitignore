@@ -1,0 +1,22 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+
+# Claude Code local harness config (machine-specific, not project source)
+.claude/
+
+# Xcode / Swift
+ios-client/build/
+ios-client/DerivedData/
+ios-client/*.xcuserstate
+ios-client/**/xcuserdata/
+ios-client/.build/
+ios-client/*.xcworkspace/xcuserdata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
