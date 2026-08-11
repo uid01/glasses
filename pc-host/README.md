@@ -41,10 +41,11 @@ dotnet run --project PcHost.csproj -- --mock              # synthetic frames, no
 | `--mock-target-ip <ip>` | 127.0.0.1 | Destination for the auto-started `--mock` session (see below). |
 | `--mock-target-port <port>` | = video-port | Destination port for the auto-started `--mock` session. |
 | `--log-dir <path>` | `<exe dir>/logs` | Where per-session ffmpeg stderr logs are written. |
-| `--monitors <csv>` | `0` | ddagrab `output_idx` values, left to right, to capture and tile into one wide canvas (e.g. `0,1`). See "Multi-monitor capture" below. |
+| `--monitors <grid>` | `0` | ddagrab `output_idx` values arranged as a grid: rows separated by `;`, columns by `,` (e.g. `0,1` = 1x2 strip, `0,1;2,3` = 2x2 grid). See "Multi-monitor capture" below. |
 | `--tile-width <px>` | 1920 | Width each captured monitor is scaled to before tiling. |
 | `--tile-height <px>` | 1080 | Height each captured monitor is scaled to before tiling. |
-| `--gap <px>` | 0 | Solid black gutter inserted between adjacent monitor tiles (no effect with a single monitor). |
+| `--gap-x <px>` | 0 | Solid black gutter between adjacent columns (no effect with 1 column). |
+| `--gap-y <px>` | 0 | Solid black gutter between adjacent rows (no effect with 1 row). |
 
 Ctrl+C shuts down cleanly: cancels all background loops, kills any running ffmpeg child
 processes, and closes the UDP sockets.
@@ -95,36 +96,54 @@ getting a multi-monitor experience through the glasses doesn't require this host
 head-tracking or reprojection itself: it only needs to hand the glasses a wide enough canvas, and
 the glasses pan across it on their own.
 
-`--monitors <csv>` picks which real DXGI outputs (ddagrab's `output_idx`, 0-based) to capture,
-left to right; each is scaled to `--tile-width x --tile-height` (regardless of its native
-resolution/aspect ratio -- a non-16:9 monitor will look slightly stretched, which was visually
-confirmed acceptable when testing with a 3440x1440 ultrawide primary scaled into a 1920x1080
-tile) and tiled side by side via ffmpeg's `hstack` filter. Bitrate scales with tile count (8Mbps
-per tile, same ratio the original single-monitor default used) so a wider canvas isn't starved of
-bits relative to how much more picture content it actually has.
+`--monitors <grid>` picks which real DXGI outputs (ddagrab's `output_idx`, 0-based) to capture,
+arranged as a grid: rows separated by `;`, columns within a row by `,` -- e.g. `0,1` is a 1x2
+horizontal strip, `0,1;2,3` is a 2x2 grid (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right).
+Every row must have the same number of columns. Each captured output is scaled to
+`--tile-width x --tile-height` regardless of its native resolution/aspect ratio (a non-16:9
+monitor will look slightly stretched, which was visually confirmed acceptable when testing with a
+3440x1440 ultrawide primary scaled into a 1920x1080 tile), each row is tiled via ffmpeg's `hstack`
+filter, and the rows are stacked via `vstack` (skipped entirely for a single row/column -- see
+`BuildFilterComplex`). Bitrate scales with total tile count (8Mbps per tile, same ratio the
+original single-monitor default used) so a bigger canvas isn't starved of bits relative to how
+much more picture content it actually has.
 
-`--gap <px>` inserts a solid black gutter between adjacent tiles (implemented as extra
-`color=black` lavfi inputs interleaved into the `hstack` chain -- see `BuildFilterComplex`), so
-the glasses show a visible break between monitors instead of one seamless edge-to-edge image,
-closer to how physical monitor bezels read as separate screens. Verified end-to-end on real
-hardware: `--monitors 0,1 --gap 60` produced a 3900x1080 canvas (3840 + 60 gap, confirmed via
-`HandshakeAck` and ffprobe on the reassembled stream) with a visually-confirmed black gutter
-between the two monitor tiles (extracted and inspected a preview frame).
+`--gap-x <px>` / `--gap-y <px>` insert a solid black gutter between adjacent columns / rows
+(implemented as extra `color=black` lavfi inputs interleaved into the `hstack`/`vstack` chains),
+so the glasses show a visible break between monitors instead of one seamless edge-to-edge image,
+closer to how physical monitor bezels read as separate screens.
 
 Run once with a single `--monitors` index first to confirm which `output_idx` corresponds to
 which physical monitor before combining them (verified empirically on the dev machine:
 `output_idx=0` was the primary monitor, `output_idx=1` the secondary -- matched Windows'
 enumeration order, but this isn't guaranteed and is worth confirming on any given machine).
 
-Verified end-to-end on real hardware with 2 real monitors (`--monitors 0,1`, a 3440x1440 primary
-and 1920x1080 secondary tiled into a 3840x1080 canvas): `HandshakeAck` correctly reported
-3840x1080 (overriding the client's 1920x1080 request), 326 frames reassembled with 0 incomplete
-over an 8s test, and ffprobe confirmed a valid decodable H264 stream at exactly 3840x1080.
+Verified end-to-end on real hardware:
+- 2 real monitors horizontally (`--monitors 0,1`, a 3440x1440 primary and 1920x1080 secondary
+  tiled into a 3840x1080 canvas, and separately with `--gap-x 60` into 3900x1080): `HandshakeAck`
+  correctly reported the canvas size, frames reassembled with 0 incomplete, ffprobe confirmed a
+  valid decodable H264 stream at the exact expected dimensions, and a black gutter was visually
+  confirmed present between tiles when `--gap-x` was set (extracted and inspected preview frames).
+- 2 real monitors vertically (`--monitors "0;1"` with `--gap-y 20`, a 2x1 grid): same
+  end-to-end verification, plus a preview frame confirmed the primary monitor's content on top,
+  secondary on bottom, with a visible horizontal gutter between them -- proving `vstack` and the
+  vertical gap path both work, not just `hstack`.
 
-"Fake"/virtual monitors beyond your real physical ones (e.g. to get a clean N-way uniform layout,
-or more screens than you have real monitors) aren't implemented yet -- that needs a Windows
-virtual display driver creating additional DXGI outputs for `--monitors` to point at. The capture
-side here doesn't care whether an output is real or virtual, only that ddagrab can enumerate it.
+### Virtual monitors
+
+Real monitors aren't the only option: [VirtualDrivers/Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+(MIT licensed, signed via SignPath Foundation) creates additional DXGI outputs Windows treats as
+ordinary monitors -- installed and verified working on the dev machine (`winget install
+--id=VirtualDrivers.Virtual-Display-Driver -e`, then run `VDD Control.exe` as Administrator, or
+use `devcon install <path to MttVDD.inf> Root\MttVDD` from an elevated prompt). Once installed, it
+shows up in Device Manager as "Virtual Display Driver" and Windows enumerates it as a normal
+display (confirmed: a new `\\.\DISPLAYn` appeared at whatever resolution `C:\VirtualDisplayDriver\vdd_settings.xml`'s
+`<monitors><count>` + `<resolutions>` specify). **The capture side here needed zero code changes
+for this** -- ddagrab enumerates virtual outputs exactly like real ones, confirmed by capturing
+the virtual monitor directly (`--monitors 2` after a 2-real-monitor setup picked it up immediately,
+ffprobe-validated). Changing the virtual monitor count/resolutions requires editing that XML and
+reloading the driver (Device Manager disable/enable, or the VDC app's restart button) -- both need
+Administrator privileges.
 
 ## Real capture pipeline
 

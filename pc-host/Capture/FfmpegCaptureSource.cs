@@ -50,21 +50,32 @@ public sealed class FfmpegCaptureSource
         int bitrateMbps = 8 * Layout.MonitorCount;
         int bufsizeMbps = Math.Max(1, bitrateMbps / 2);
 
+        // Input stream ordering, which BuildFilterComplex assumes exactly: monitor inputs
+        // (row-major, indices 0..MonitorCount-1), then horizontal gap spacers grouped per row
+        // (Rows*(Columns-1) of them, if GapX>0), then vertical gap spacers (Rows-1 of them, if
+        // GapY>0) -- see BuildFilterComplex's doc comment for the precise index math.
         string monitorInputArgs = string.Join(' ', Layout.OutputIndices.Select(idx =>
             $"-f lavfi -i \"ddagrab=output_idx={idx}:framerate={Fps}\""));
 
-        // Gap spacer inputs (if configured) are appended AFTER the monitor inputs, one per
-        // gutter between adjacent tiles -- BuildFilterComplex assumes this exact ordering
-        // (monitor inputs occupy stream indices 0..MonitorCount-1, gap inputs occupy
-        // MonitorCount..MonitorCount+gapCount-1) when it wires up the filter graph.
-        bool hasGap = Layout.GapWidth > 0 && Layout.MonitorCount > 1;
-        string gapInputArgs = hasGap
+        bool hasGapX = Layout.GapX > 0 && Layout.Columns > 1;
+        string hGapInputArgs = hasGapX
             ? string.Join(' ', Enumerable.Repeat(
-                $"-f lavfi -i \"color=c=black:s={Layout.GapWidth}x{Layout.TileHeight}:r={Fps}\"",
-                Layout.MonitorCount - 1))
+                $"-f lavfi -i \"color=c=black:s={Layout.GapX}x{Layout.TileHeight}:r={Fps}\"",
+                Layout.Rows * (Layout.Columns - 1)))
             : string.Empty;
 
-        string inputArgs = hasGap ? $"{monitorInputArgs} {gapInputArgs}" : monitorInputArgs;
+        bool hasGapY = Layout.GapY > 0 && Layout.Rows > 1;
+        string vGapInputArgs = hasGapY
+            ? string.Join(' ', Enumerable.Repeat(
+                // Full canvas width, since a vertical gap spans the entire row (which itself
+                // already includes any horizontal gaps) -- vstack requires all inputs share the
+                // same width.
+                $"-f lavfi -i \"color=c=black:s={Layout.CanvasWidth}x{Layout.GapY}:r={Fps}\"",
+                Layout.Rows - 1))
+            : string.Empty;
+
+        string inputArgs = string.Join(' ', new[] { monitorInputArgs, hGapInputArgs, vGapInputArgs }
+            .Where(s => !string.IsNullOrEmpty(s)));
 
         string filterComplex = BuildFilterComplex(Layout);
 
@@ -98,55 +109,109 @@ public sealed class FfmpegCaptureSource
     }
 
     /// <summary>
-    /// Builds the filter_complex graph: each monitor input gets hwdownload'd off the GPU and
-    /// scaled to the layout's uniform tile size, then all tiles are hstack'd left-to-right
-    /// (matching <see cref="MonitorLayout.OutputIndices"/> order) and converted to yuv420p for
-    /// the encoder. If <see cref="MonitorLayout.GapWidth"/> is set (and there's more than one
-    /// monitor), a solid black spacer tile is interleaved between each adjacent pair -- those
-    /// spacer inputs are assumed to occupy stream indices MonitorCount..MonitorCount+gapCount-1,
-    /// matching the input ordering <see cref="Start"/> constructs. For a single-monitor layout,
-    /// hstack (which requires 2+ inputs) is skipped entirely.
+    /// Builds the filter_complex graph for a 2D grid: each monitor input gets hwdownload'd off
+    /// the GPU and scaled to the layout's uniform tile size; each row is hstack'd left-to-right
+    /// (with a solid black spacer interleaved between columns if <see cref="MonitorLayout.GapX"/>
+    /// is set); then all rows are vstack'd top-to-bottom (with a full-width spacer between rows
+    /// if <see cref="MonitorLayout.GapY"/> is set), converting to yuv420p only at this final step
+    /// for the encoder. hstack/vstack (which require 2+ inputs) are skipped when there's only one
+    /// column/row respectively -- a 1x1 grid short-circuits to just the single tile.
+    ///
+    /// Input stream index assumptions (must match <see cref="Start"/>'s input ordering exactly):
+    /// monitor tiles occupy 0..MonitorCount-1 (row-major); horizontal gap spacers, if any, occupy
+    /// MonitorCount..MonitorCount+Rows*(Columns-1)-1, grouped per row; vertical gap spacers, if
+    /// any, occupy whatever's left, Rows-1 of them.
     /// </summary>
     public static string BuildFilterComplex(MonitorLayout layout)
     {
         var sb = new StringBuilder();
+        int rows = layout.Rows;
+        int cols = layout.Columns;
         int monitorCount = layout.MonitorCount;
 
-        var tileLabels = new List<string>();
-        for (int i = 0; i < monitorCount; i++)
+        // Monitor tiles, row-major, input streams 0..monitorCount-1.
+        var tileLabels = new string[rows, cols];
+        int inputIndex = 0;
+        for (int r = 0; r < rows; r++)
         {
-            string label = $"v{i}";
-            sb.Append($"[{i}:v]hwdownload,format=bgra,scale={layout.TileWidth}:{layout.TileHeight}[{label}];");
-            tileLabels.Add(label);
+            for (int c = 0; c < cols; c++)
+            {
+                string label = $"v{r}_{c}";
+                sb.Append($"[{inputIndex}:v]hwdownload,format=bgra,scale={layout.TileWidth}:{layout.TileHeight}[{label}];");
+                tileLabels[r, c] = label;
+                inputIndex++;
+            }
         }
 
-        if (monitorCount == 1)
+        if (rows == 1 && cols == 1)
         {
-            sb.Append($"[{tileLabels[0]}]format=yuv420p[vout]");
+            sb.Append($"[{tileLabels[0, 0]}]format=yuv420p[vout]");
             return sb.ToString();
         }
 
-        bool hasGap = layout.GapWidth > 0;
-        var stackLabels = new List<string> { tileLabels[0] };
+        bool hasGapX = layout.GapX > 0 && cols > 1;
+        bool hasGapY = layout.GapY > 0 && rows > 1;
+        int hGapsPerRow = hasGapX ? cols - 1 : 0;
+        int hGapInputBase = monitorCount;
 
-        for (int i = 1; i < monitorCount; i++)
+        // Build each row: either the single tile (1 column) or an hstack of that row's tiles
+        // (with gap spacers interleaved). Rows stay in bgra format -- final yuv420p conversion
+        // happens once, at the very end, whether there's 1 row or many.
+        var rowLabels = new string[rows];
+        for (int r = 0; r < rows; r++)
         {
-            if (hasGap)
+            if (cols == 1)
             {
-                int gapInputIndex = monitorCount + (i - 1);
-                string gapLabel = $"gap{i - 1}";
-                // `color=` lavfi sources default to rgb24; converted to bgra here so the gap
-                // tile matches the monitor tiles' format going into hstack (which requires all
-                // inputs share the same pixel format).
-                sb.Append($"[{gapInputIndex}:v]format=bgra[{gapLabel}];");
-                stackLabels.Add(gapLabel);
+                rowLabels[r] = tileLabels[r, 0];
+                continue;
             }
 
-            stackLabels.Add(tileLabels[i]);
+            var stackLabels = new List<string> { tileLabels[r, 0] };
+            for (int c = 1; c < cols; c++)
+            {
+                if (hasGapX)
+                {
+                    int gapInputIndex = hGapInputBase + r * hGapsPerRow + (c - 1);
+                    string gapLabel = $"hgap{r}_{c - 1}";
+                    // `color=` lavfi sources default to rgb24; converted to bgra here so the gap
+                    // tile matches the monitor tiles' format going into hstack (which requires
+                    // all inputs share the same pixel format).
+                    sb.Append($"[{gapInputIndex}:v]format=bgra[{gapLabel}];");
+                    stackLabels.Add(gapLabel);
+                }
+
+                stackLabels.Add(tileLabels[r, c]);
+            }
+
+            string rowLabel = $"row{r}";
+            string joinedRow = string.Concat(stackLabels.Select(l => $"[{l}]"));
+            sb.Append($"{joinedRow}hstack=inputs={stackLabels.Count}[{rowLabel}];");
+            rowLabels[r] = rowLabel;
         }
 
-        string joinedInputs = string.Concat(stackLabels.Select(l => $"[{l}]"));
-        sb.Append($"{joinedInputs}hstack=inputs={stackLabels.Count},format=yuv420p[vout]");
+        if (rows == 1)
+        {
+            sb.Append($"[{rowLabels[0]}]format=yuv420p[vout]");
+            return sb.ToString();
+        }
+
+        int vGapInputBase = hGapInputBase + rows * hGapsPerRow;
+        var vStackLabels = new List<string> { rowLabels[0] };
+        for (int r = 1; r < rows; r++)
+        {
+            if (hasGapY)
+            {
+                int gapInputIndex = vGapInputBase + (r - 1);
+                string gapLabel = $"vgap{r - 1}";
+                sb.Append($"[{gapInputIndex}:v]format=bgra[{gapLabel}];");
+                vStackLabels.Add(gapLabel);
+            }
+
+            vStackLabels.Add(rowLabels[r]);
+        }
+
+        string joinedRows = string.Concat(vStackLabels.Select(l => $"[{l}]"));
+        sb.Append($"{joinedRows}vstack=inputs={vStackLabels.Count},format=yuv420p[vout]");
 
         return sb.ToString();
     }

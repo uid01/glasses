@@ -13,7 +13,7 @@ public static class Program
 
         Console.WriteLine("PC Host -- low-latency desktop bridge");
         Console.WriteLine($"  mode         : {(options.Mock ? "MOCK (no ffmpeg, synthetic frames)" : "REAL (ffmpeg capture)")}");
-        Console.WriteLine($"  monitors     : output_idx [{string.Join(',', options.MonitorLayout.OutputIndices)}], tile {options.MonitorLayout.TileWidth}x{options.MonitorLayout.TileHeight}, gap {options.MonitorLayout.GapWidth}px -> canvas {options.MonitorLayout.CanvasWidth}x{options.MonitorLayout.CanvasHeight}");
+        Console.WriteLine($"  monitors     : {options.MonitorLayout.Rows}x{options.MonitorLayout.Columns} grid, output_idx [{string.Join(',', options.MonitorLayout.OutputIndices)}], tile {options.MonitorLayout.TileWidth}x{options.MonitorLayout.TileHeight}, gap {options.MonitorLayout.GapX}x{options.MonitorLayout.GapY}px -> canvas {options.MonitorLayout.CanvasWidth}x{options.MonitorLayout.CanvasHeight}");
         Console.WriteLine($"  control port : {options.ControlPort}");
         Console.WriteLine($"  video port   : {options.VideoPort}");
         Console.WriteLine($"  input port   : {options.InputPort}");
@@ -98,20 +98,21 @@ internal sealed class CliOptions
     public string LogDirectory { get; private set; } = Path.Combine(AppContext.BaseDirectory, "logs");
 
     /// <summary>
-    /// Which monitor(s) to capture and tile into one wide canvas -- see
-    /// Capture/MonitorLayout.cs. Defaults to just the primary monitor (output_idx 0), matching
-    /// the original single-monitor behavior, so existing single-screen usage is unaffected
-    /// unless --monitors is explicitly passed.
+    /// Which monitor(s) to capture and tile into one canvas -- see Capture/MonitorLayout.cs.
+    /// Defaults to just the primary monitor (output_idx 0), matching the original single-monitor
+    /// behavior, so existing single-screen usage is unaffected unless --monitors is explicitly
+    /// passed.
     /// </summary>
     public MonitorLayout MonitorLayout { get; private set; } = MonitorLayout.SinglePrimary;
 
     public static CliOptions Parse(string[] args)
     {
         var options = new CliOptions();
-        string monitorsCsv = "0";
+        string monitorsGridSpec = "0";
         int tileWidth = 1920;
         int tileHeight = 1080;
-        int gapWidth = 0;
+        int gapX = 0;
+        int gapY = 0;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -139,14 +140,14 @@ internal sealed class CliOptions
                 case "--log-dir" when i + 1 < args.Length:
                     options.LogDirectory = args[++i];
                     break;
-                // Comma-separated ddagrab output_idx values, left to right, e.g. "0,1" to tile
-                // this machine's two real monitors (primary, secondary) into one wide canvas
-                // for the glasses' own onboard 3DoF panning to pan across. Run once with a
-                // single index (the default) if you just want to confirm which output_idx
-                // corresponds to which physical monitor before combining them -- see
+                // ddagrab output_idx values arranged as a grid: rows separated by ";", columns
+                // within a row separated by ",". E.g. "0,1" is a 1x2 horizontal strip; "0,1;2,3"
+                // is a 2x2 grid (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right). Run
+                // once with a single index (the default) first if you just want to confirm which
+                // output_idx corresponds to which physical monitor before combining them -- see
                 // pc-host/README.md's "Multi-monitor capture" section.
                 case "--monitors" when i + 1 < args.Length:
-                    monitorsCsv = args[++i];
+                    monitorsGridSpec = args[++i];
                     break;
                 case "--tile-width" when i + 1 < args.Length:
                     tileWidth = int.Parse(args[++i]);
@@ -154,17 +155,21 @@ internal sealed class CliOptions
                 case "--tile-height" when i + 1 < args.Length:
                     tileHeight = int.Parse(args[++i]);
                     break;
-                // Solid black gutter (pixels) between adjacent monitor tiles, so the glasses
+                // Solid black gutters (pixels) between adjacent monitor tiles, so the glasses
                 // show a visible break between screens instead of one seamless edge-to-edge
-                // image -- closer to how physical monitor bezels read as separate screens. No
-                // effect with a single monitor.
-                case "--gap" when i + 1 < args.Length:
-                    gapWidth = int.Parse(args[++i]);
+                // image -- closer to how physical monitor bezels read as separate screens.
+                // --gap-x is between columns, --gap-y is between rows; each is a no-op if the
+                // grid only has 1 column / 1 row respectively.
+                case "--gap-x" when i + 1 < args.Length:
+                    gapX = int.Parse(args[++i]);
+                    break;
+                case "--gap-y" when i + 1 < args.Length:
+                    gapY = int.Parse(args[++i]);
                     break;
             }
         }
 
-        options.MonitorLayout = MonitorLayout.Parse(monitorsCsv, tileWidth, tileHeight, gapWidth);
+        options.MonitorLayout = MonitorLayout.Parse(monitorsGridSpec, tileWidth, tileHeight, gapX, gapY);
         return options;
     }
 }
