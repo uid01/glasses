@@ -44,6 +44,7 @@ dotnet run --project PcHost.csproj -- --mock              # synthetic frames, no
 | `--monitors <csv>` | `0` | ddagrab `output_idx` values, left to right, to capture and tile into one wide canvas (e.g. `0,1`). See "Multi-monitor capture" below. |
 | `--tile-width <px>` | 1920 | Width each captured monitor is scaled to before tiling. |
 | `--tile-height <px>` | 1080 | Height each captured monitor is scaled to before tiling. |
+| `--gap <px>` | 0 | Solid black gutter inserted between adjacent monitor tiles (no effect with a single monitor). |
 
 Ctrl+C shuts down cleanly: cancels all background loops, kills any running ffmpeg child
 processes, and closes the UDP sockets.
@@ -101,6 +102,14 @@ confirmed acceptable when testing with a 3440x1440 ultrawide primary scaled into
 tile) and tiled side by side via ffmpeg's `hstack` filter. Bitrate scales with tile count (8Mbps
 per tile, same ratio the original single-monitor default used) so a wider canvas isn't starved of
 bits relative to how much more picture content it actually has.
+
+`--gap <px>` inserts a solid black gutter between adjacent tiles (implemented as extra
+`color=black` lavfi inputs interleaved into the `hstack` chain -- see `BuildFilterComplex`), so
+the glasses show a visible break between monitors instead of one seamless edge-to-edge image,
+closer to how physical monitor bezels read as separate screens. Verified end-to-end on real
+hardware: `--monitors 0,1 --gap 60` produced a 3900x1080 canvas (3840 + 60 gap, confirmed via
+`HandshakeAck` and ffprobe on the reassembled stream) with a visually-confirmed black gutter
+between the two monitor tiles (extracted and inspected a preview frame).
 
 Run once with a single `--monitors` index first to confirm which `output_idx` corresponds to
 which physical monitor before combining them (verified empirically on the dev machine:

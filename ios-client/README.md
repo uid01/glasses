@@ -145,6 +145,27 @@ UIKit/Network/VideoToolbox -- so they're the most reliable thing in this
 project to run in CI or locally: `Product > Test` in Xcode, or
 `xcodebuild test` (see the CI workflow for the exact invocation).
 
+## Multi-monitor display mode (genuinely unverified, read before testing)
+
+`pc-host` can now send a wide multi-monitor canvas (e.g. 3840x1080 for 2
+tiled monitors) instead of a single 1920x1080 screen -- see
+[`pc-host/README.md`](pc-host/README.md#multi-monitor-capture). For that
+to actually work, the glasses need to be *operating in* a display mode
+wide enough to show it; `SceneDelegate.swift`'s
+`ExternalDisplaySceneDelegate` now selects the widest `UIScreenMode` the
+external display reports via `UIScreen.availableModes` before creating
+the window, rather than relying on whatever the default mode is (which
+`AVSampleBufferDisplayLayer`'s `.resizeAspect` would otherwise just
+shrink/letterbox a wide canvas down to fit).
+
+This is real, but genuinely unverified: there's no way to know from this
+environment whether the 1S actually advertises more than one
+`UIScreenMode` at all (it may report only its native panel resolution as
+the sole available mode, in which case this is a no-op and multi-monitor
+would need a different mechanism entirely). Check the console log line
+`[external-display] available modes: [...]` first if the wide canvas
+looks cropped/shrunk rather than pannable.
+
 ## Known risk areas (read before assuming this "just works")
 
 Since nothing here could be compiled or run in the environment this was

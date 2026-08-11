@@ -13,7 +13,7 @@ public static class Program
 
         Console.WriteLine("PC Host -- low-latency desktop bridge");
         Console.WriteLine($"  mode         : {(options.Mock ? "MOCK (no ffmpeg, synthetic frames)" : "REAL (ffmpeg capture)")}");
-        Console.WriteLine($"  monitors     : output_idx [{string.Join(',', options.MonitorLayout.OutputIndices)}], tile {options.MonitorLayout.TileWidth}x{options.MonitorLayout.TileHeight} -> canvas {options.MonitorLayout.CanvasWidth}x{options.MonitorLayout.CanvasHeight}");
+        Console.WriteLine($"  monitors     : output_idx [{string.Join(',', options.MonitorLayout.OutputIndices)}], tile {options.MonitorLayout.TileWidth}x{options.MonitorLayout.TileHeight}, gap {options.MonitorLayout.GapWidth}px -> canvas {options.MonitorLayout.CanvasWidth}x{options.MonitorLayout.CanvasHeight}");
         Console.WriteLine($"  control port : {options.ControlPort}");
         Console.WriteLine($"  video port   : {options.VideoPort}");
         Console.WriteLine($"  input port   : {options.InputPort}");
@@ -111,6 +111,7 @@ internal sealed class CliOptions
         string monitorsCsv = "0";
         int tileWidth = 1920;
         int tileHeight = 1080;
+        int gapWidth = 0;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -153,10 +154,17 @@ internal sealed class CliOptions
                 case "--tile-height" when i + 1 < args.Length:
                     tileHeight = int.Parse(args[++i]);
                     break;
+                // Solid black gutter (pixels) between adjacent monitor tiles, so the glasses
+                // show a visible break between screens instead of one seamless edge-to-edge
+                // image -- closer to how physical monitor bezels read as separate screens. No
+                // effect with a single monitor.
+                case "--gap" when i + 1 < args.Length:
+                    gapWidth = int.Parse(args[++i]);
+                    break;
             }
         }
 
-        options.MonitorLayout = MonitorLayout.Parse(monitorsCsv, tileWidth, tileHeight);
+        options.MonitorLayout = MonitorLayout.Parse(monitorsCsv, tileWidth, tileHeight, gapWidth);
         return options;
     }
 }

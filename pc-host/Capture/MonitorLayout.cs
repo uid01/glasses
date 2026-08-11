@@ -30,8 +30,16 @@ public sealed class MonitorLayout
     public required int TileWidth { get; init; }
     public required int TileHeight { get; init; }
 
+    /// <summary>
+    /// Solid black gutter (pixels) inserted between adjacent tiles, so the glasses' panning
+    /// shows a visible break between monitors instead of one seamless edge-to-edge image --
+    /// closer to how physical monitor bezels read as separate screens. Zero (the default) means
+    /// no gap, i.e. the original edge-to-edge behavior. Has no effect with a single monitor.
+    /// </summary>
+    public int GapWidth { get; init; }
+
     public int MonitorCount => OutputIndices.Length;
-    public int CanvasWidth => TileWidth * OutputIndices.Length;
+    public int CanvasWidth => TileWidth * OutputIndices.Length + GapWidth * Math.Max(0, OutputIndices.Length - 1);
     public int CanvasHeight => TileHeight;
 
     /// <summary>Single primary-monitor capture -- the original, pre-multi-monitor behavior.</summary>
@@ -42,7 +50,7 @@ public sealed class MonitorLayout
         TileHeight = 1080,
     };
 
-    public static MonitorLayout Parse(string outputIndicesCsv, int tileWidth, int tileHeight)
+    public static MonitorLayout Parse(string outputIndicesCsv, int tileWidth, int tileHeight, int gapWidth = 0)
     {
         var indices = outputIndicesCsv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -54,11 +62,17 @@ public sealed class MonitorLayout
             throw new ArgumentException("At least one monitor output index is required.", nameof(outputIndicesCsv));
         }
 
+        if (gapWidth < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(gapWidth), gapWidth, "Gap width cannot be negative.");
+        }
+
         return new MonitorLayout
         {
             OutputIndices = indices,
             TileWidth = tileWidth,
             TileHeight = tileHeight,
+            GapWidth = gapWidth,
         };
     }
 }
