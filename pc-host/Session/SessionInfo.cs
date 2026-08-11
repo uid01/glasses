@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using PcHost.Capture;
 
 namespace PcHost.Session;
 
@@ -27,6 +28,16 @@ public sealed class SessionInfo
     public required ushort Height { get; init; }
     public required byte Fps { get; init; }
     public required byte Codec { get; init; } // 0=H264, 1=HEVC
+
+    /// <summary>
+    /// Which real monitor(s) to capture and how to tile them -- see <see cref="Capture.MonitorLayout"/>.
+    /// Null only for the synthetic `--mock` session (which never launches ffmpeg, so there's
+    /// nothing to capture). Whoever constructs a real session must keep Width/Height in sync
+    /// with Layout.CanvasWidth/CanvasHeight -- they're kept as separate fields rather than
+    /// computed from Layout because Width/Height are also what gets echoed to the client in
+    /// HandshakeAck, independent of how the host produces the pixels.
+    /// </summary>
+    public MonitorLayout? Layout { get; init; }
 
     /// <summary>
     /// True only for the synthetic session `--mock` mode auto-starts without a real Handshake

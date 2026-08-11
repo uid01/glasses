@@ -41,6 +41,9 @@ dotnet run --project PcHost.csproj -- --mock              # synthetic frames, no
 | `--mock-target-ip <ip>` | 127.0.0.1 | Destination for the auto-started `--mock` session (see below). |
 | `--mock-target-port <port>` | = video-port | Destination port for the auto-started `--mock` session. |
 | `--log-dir <path>` | `<exe dir>/logs` | Where per-session ffmpeg stderr logs are written. |
+| `--monitors <csv>` | `0` | ddagrab `output_idx` values, left to right, to capture and tile into one wide canvas (e.g. `0,1`). See "Multi-monitor capture" below. |
+| `--tile-width <px>` | 1920 | Width each captured monitor is scaled to before tiling. |
+| `--tile-height <px>` | 1080 | Height each captured monitor is scaled to before tiling. |
 
 Ctrl+C shuts down cleanly: cancels all background loops, kills any running ffmpeg child
 processes, and closes the UDP sockets.
@@ -74,14 +77,51 @@ any session created that way also uses the mock frame source instead of ffmpeg.
 
 ### Resolution negotiation
 
-Per the task's MVP scope, the host accepts a client's requested resolution/fps only if it's
-exactly one of: 1920x1080@60, 1920x1200@60, or a ~16:18 aspect vertical mode at 60fps. Any other
-request falls back to 1920x1080@60 H264 -- an ack is always sent (never silently dropped), so
-every Handshake results in a usable session.
+The host is authoritative on resolution, not the client. The client's requested width/height/fps
+in `Handshake` is parsed but not honored -- the `HandshakeAck` always reports the canvas size
+implied by `--monitors`/`--tile-width`/`--tile-height` (see "Multi-monitor capture" below), and
+fps is fixed at 60. An ack is always sent (never silently dropped), so every Handshake results in
+a usable session. This is a deliberate design choice, not a limitation to fix later: "how many
+screens and what layout" is meant to be a host-side decision (the PC drives monitor
+creation/layout; the client is just a display+input gateway), not something the client requests.
+
+## Multi-monitor capture
+
+The XREAL 1S's onboard X1 chip already does 3DoF head-tracking-driven panning across whatever
+video signal it's fed, entirely on its own hardware, independent of the source -- this is how
+XREAL's own Nebula software achieves its ultrawide/multi-monitor "follow mode" experience. So
+getting a multi-monitor experience through the glasses doesn't require this host to do any
+head-tracking or reprojection itself: it only needs to hand the glasses a wide enough canvas, and
+the glasses pan across it on their own.
+
+`--monitors <csv>` picks which real DXGI outputs (ddagrab's `output_idx`, 0-based) to capture,
+left to right; each is scaled to `--tile-width x --tile-height` (regardless of its native
+resolution/aspect ratio -- a non-16:9 monitor will look slightly stretched, which was visually
+confirmed acceptable when testing with a 3440x1440 ultrawide primary scaled into a 1920x1080
+tile) and tiled side by side via ffmpeg's `hstack` filter. Bitrate scales with tile count (8Mbps
+per tile, same ratio the original single-monitor default used) so a wider canvas isn't starved of
+bits relative to how much more picture content it actually has.
+
+Run once with a single `--monitors` index first to confirm which `output_idx` corresponds to
+which physical monitor before combining them (verified empirically on the dev machine:
+`output_idx=0` was the primary monitor, `output_idx=1` the secondary -- matched Windows'
+enumeration order, but this isn't guaranteed and is worth confirming on any given machine).
+
+Verified end-to-end on real hardware with 2 real monitors (`--monitors 0,1`, a 3440x1440 primary
+and 1920x1080 secondary tiled into a 3840x1080 canvas): `HandshakeAck` correctly reported
+3840x1080 (overriding the client's 1920x1080 request), 326 frames reassembled with 0 incomplete
+over an 8s test, and ffprobe confirmed a valid decodable H264 stream at exactly 3840x1080.
+
+"Fake"/virtual monitors beyond your real physical ones (e.g. to get a clean N-way uniform layout,
+or more screens than you have real monitors) aren't implemented yet -- that needs a Windows
+virtual display driver creating additional DXGI outputs for `--monitors` to point at. The capture
+side here doesn't care whether an output is real or virtual, only that ddagrab can enumerate it.
 
 ## Real capture pipeline
 
-For a real (non-mock) session, the host launches:
+For a real (non-mock) session, the host launches (shown for a single monitor; `--monitors 0,1`
+adds a second `-f lavfi -i ddagrab=...` input and an `hstack` step in `-filter_complex` -- see
+`Capture/FfmpegCaptureSource.cs`'s `BuildFilterComplex`):
 
 ```
 ffmpeg -hide_banner -loglevel warning -f lavfi -i ddagrab=framerate=<fps> \

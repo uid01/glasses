@@ -18,9 +18,10 @@ public sealed class ControlServer : IDisposable
     private readonly int _videoPort;
     private readonly bool _mock;
     private readonly string _logDirectory;
+    private readonly MonitorLayout _monitorLayout;
     private long _nextSessionIdCounter = Random.Shared.Next(1, int.MaxValue);
 
-    public ControlServer(int controlPort, int videoPort, SessionManager sessions, VideoSender videoSender, bool mock, string logDirectory)
+    public ControlServer(int controlPort, int videoPort, SessionManager sessions, VideoSender videoSender, bool mock, string logDirectory, MonitorLayout monitorLayout)
     {
         _listener = new UdpClient(new IPEndPoint(IPAddress.Any, controlPort));
         _videoPort = videoPort;
@@ -28,6 +29,7 @@ public sealed class ControlServer : IDisposable
         _videoSender = videoSender;
         _mock = mock;
         _logDirectory = logDirectory;
+        _monitorLayout = monitorLayout;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -139,7 +141,15 @@ public sealed class ControlServer : IDisposable
             return;
         }
 
-        var (width, height, fps) = ChooseMode(handshake.DesiredWidth, handshake.DesiredHeight, handshake.DesiredFps);
+        // The host is authoritative on resolution, not the client: the canvas is however many
+        // real monitors this PC is configured to capture (see MonitorLayout), tiled together --
+        // the client's requested width/height/fps is accepted but not honored, since "how many
+        // screens and what layout" is a host-side decision by design (the whole point is the PC
+        // drives monitor creation/layout; the client is just a display+input gateway). fps stays
+        // fixed at 60 for now -- no client has ever needed anything else in practice.
+        ushort width = (ushort)_monitorLayout.CanvasWidth;
+        ushort height = (ushort)_monitorLayout.CanvasHeight;
+        const byte fps = 60;
         const byte chosenCodec = 0; // H264 only; HEVC encode path is not implemented in this MVP.
 
         uint sessionId = unchecked((uint)Interlocked.Increment(ref _nextSessionIdCounter));
@@ -154,6 +164,7 @@ public sealed class ControlServer : IDisposable
             Height = height,
             Fps = fps,
             Codec = chosenCodec,
+            Layout = _mock ? null : _monitorLayout,
         };
 
         _sessions.Add(session);
@@ -174,40 +185,7 @@ public sealed class ControlServer : IDisposable
         ack.WriteTo(buffer);
         _listener.Send(buffer, remoteEndPoint);
 
-        Console.WriteLine($"[control] session {sessionId} accepted from {remoteEndPoint} -> {width}x{height}@{fps} codec={chosenCodec} ({(_mock ? "mock" : "ffmpeg")})");
-    }
-
-    /// <summary>
-    /// Resolution/fps negotiation. Per the PC-Host-Agent task spec: accept the client's request
-    /// if it's exactly 1920x1080@60, 1920x1200@60, or a 16:18-ish vertical mode at 60fps;
-    /// otherwise fall back to 1920x1080@60. Note this always sends an ack (even on fallback)
-    /// rather than PROTOCOL.md's general "silently don't respond on rejection" rule -- the task
-    /// spec explicitly calls for always accepting/falling back rather than dropping, so every
-    /// handshake gets a usable session.
-    /// </summary>
-    private static (ushort width, ushort height, byte fps) ChooseMode(ushort width, ushort height, byte fps)
-    {
-        if (width == 1920 && height == 1080 && fps == 60)
-        {
-            return (1920, 1080, 60);
-        }
-
-        if (width == 1920 && height == 1200 && fps == 60)
-        {
-            return (1920, 1200, 60);
-        }
-
-        if (fps == 60 && width > 0)
-        {
-            double aspect = (double)height / width;
-            const double targetAspect = 18.0 / 16.0; // 1.125
-            if (Math.Abs(aspect - targetAspect) < 0.05)
-            {
-                return (width, height, 60);
-            }
-        }
-
-        return (1920, 1080, 60);
+        Console.WriteLine($"[control] session {sessionId} accepted from {remoteEndPoint} -> {width}x{height}@{fps} codec={chosenCodec} ({_monitorLayout.MonitorCount} monitor(s), {(_mock ? "mock" : "ffmpeg")})");
     }
 
     public void Dispose() => _listener.Dispose();

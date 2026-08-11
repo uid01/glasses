@@ -1,22 +1,26 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace PcHost.Capture;
 
 /// <summary>
-/// Launches ffmpeg to capture the desktop (ddagrab / DXGI Desktop Duplication) and encode it to
-/// raw Annex-B H264 on stdout, then feeds the byte stream through <see cref="AnnexBFrameSplitter"/>
-/// and invokes a callback per completed frame.
+/// Launches ffmpeg to capture one or more monitors (ddagrab / DXGI Desktop Duplication),
+/// tiles them side by side into one wide canvas per <see cref="Layout"/>, and encodes the result
+/// to raw Annex-B H264 on stdout, then feeds the byte stream through
+/// <see cref="AnnexBFrameSplitter"/> and invokes a callback per completed frame.
 ///
-/// Capture filter graph (ddagrab) was verified empirically on this machine to work well: it
-/// reports the real desktop (3440x1440 in testing) as a d3d11 hardware frame. Encoding then
-/// downloads that frame to system memory, scales to the client's chosen resolution, and converts
-/// to yuv420p before handing to the H264 encoder. See <see cref="EncoderProbe"/> for why the
-/// encoder itself (h264_nvenc vs libx264) is chosen dynamically rather than hardcoded to NVENC.
+/// Multi-monitor capture graph verified empirically on this machine (2 real outputs, 3440x1440
+/// primary + 1920x1080 secondary, tiled to a 3840x1080 canvas): ffprobe confirmed a valid H264
+/// stream with the expected dimensions end to end. See <see cref="MonitorLayout"/> for why tiling
+/// real capture into a wide canvas is the entire multi-monitor feature -- the glasses' own
+/// onboard 3DoF chip does the head-tracking-driven panning across it, not this code.
+///
+/// See <see cref="EncoderProbe"/> for why the encoder itself (h264_nvenc vs libx264) is chosen
+/// dynamically rather than hardcoded to NVENC.
 /// </summary>
 public sealed class FfmpegCaptureSource
 {
-    public required int Width { get; init; }
-    public required int Height { get; init; }
+    public required MonitorLayout Layout { get; init; }
     public required int Fps { get; init; }
     public required string LogFilePath { get; init; }
 
@@ -38,13 +42,24 @@ public sealed class FfmpegCaptureSource
             : "-c:v libx264 -preset ultrafast -tune zerolatency -x264-params \"aud=1\"";
 
         int gop = Math.Max(1, Fps * 2);
-        string filter = $"hwdownload,format=bgra,scale={Width}:{Height},format=yuv420p";
+
+        // One bitrate/maxrate budget scaled per monitor tile (same 8M-per-tile ratio the
+        // original single-monitor default used) rather than a fixed total, so a wider canvas
+        // (more monitors) doesn't get starved of bits relative to how much more picture content
+        // it actually contains.
+        int bitrateMbps = 8 * Layout.MonitorCount;
+        int bufsizeMbps = Math.Max(1, bitrateMbps / 2);
+
+        string inputArgs = string.Join(' ', Layout.OutputIndices.Select(idx =>
+            $"-f lavfi -i \"ddagrab=output_idx={idx}:framerate={Fps}\""));
+
+        string filterComplex = BuildFilterComplex(Layout);
 
         string args = "-hide_banner -loglevel warning " +
-                      $"-f lavfi -i ddagrab=framerate={Fps} " +
-                      $"-vf \"{filter}\" " +
+                      $"{inputArgs} " +
+                      $"-filter_complex \"{filterComplex}\" -map \"[vout]\" " +
                       $"{encoderArgs} -profile:v baseline -g {gop} " +
-                      "-b:v 8M -maxrate 8M -bufsize 4M " +
+                      $"-b:v {bitrateMbps}M -maxrate {bitrateMbps}M -bufsize {bufsizeMbps}M " +
                       "-f h264 -";
 
         var psi = new ProcessStartInfo
@@ -67,6 +82,37 @@ public sealed class FfmpegCaptureSource
         _ = Task.Run(() => DrainStderrAsync(process));
 
         return process;
+    }
+
+    /// <summary>
+    /// Builds the filter_complex graph: each input gets hwdownload'd off the GPU and scaled to
+    /// the layout's uniform tile size, then all tiles are hstack'd left-to-right (matching
+    /// <see cref="MonitorLayout.OutputIndices"/> order) and converted to yuv420p for the encoder.
+    /// For a single-monitor layout, hstack (which requires 2+ inputs) is skipped entirely.
+    /// </summary>
+    public static string BuildFilterComplex(MonitorLayout layout)
+    {
+        var sb = new StringBuilder();
+        var tileLabels = new List<string>();
+
+        for (int i = 0; i < layout.OutputIndices.Length; i++)
+        {
+            string label = $"v{i}";
+            sb.Append($"[{i}:v]hwdownload,format=bgra,scale={layout.TileWidth}:{layout.TileHeight}[{label}];");
+            tileLabels.Add(label);
+        }
+
+        if (tileLabels.Count == 1)
+        {
+            sb.Append($"[{tileLabels[0]}]format=yuv420p[vout]");
+        }
+        else
+        {
+            string joinedInputs = string.Concat(tileLabels.Select(l => $"[{l}]"));
+            sb.Append($"{joinedInputs}hstack=inputs={tileLabels.Count},format=yuv420p[vout]");
+        }
+
+        return sb.ToString();
     }
 
     private async Task DrainStderrAsync(Process process)

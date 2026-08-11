@@ -38,7 +38,14 @@ cd pc-host
 dotnet build
 dotnet run -- --mock      # no ffmpeg/client needed, exercises the network+protocol path
 dotnet run                # real capture; waits for a Handshake on UDP 9000
+dotnet run -- --monitors 0,1   # tile 2 real monitors into one wide canvas (see below)
 ```
+**Multi-monitor**: the XREAL 1S already does 3DoF head-tracking-driven panning across whatever
+video it's fed, entirely on its own hardware — so getting a multi-monitor experience through the
+glasses is just a matter of sending a wide enough canvas, not building any head-tracking or
+rendering ourselves. `--monitors 0,1` (etc.) captures multiple real monitors and tiles them side
+by side; see [`pc-host/README.md`](pc-host/README.md#multi-monitor-capture) for how to figure out
+which `output_idx` is which physical monitor. Verified end-to-end on real hardware.
 Prerequisites: .NET 8 SDK, ffmpeg on PATH. An NVIDIA GPU is not strictly
 required — the host probes `h264_nvenc` at startup and falls back to
 software `libx264` automatically if it's unavailable or the driver is too

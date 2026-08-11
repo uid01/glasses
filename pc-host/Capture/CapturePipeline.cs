@@ -37,10 +37,11 @@ public static class CapturePipeline
         }
 
         var logPath = Path.Combine(logDirectory, $"ffmpeg-session-{session.SessionId}.log");
+        var layout = session.Layout
+            ?? throw new InvalidOperationException($"Session {session.SessionId} has no MonitorLayout -- required for real (non-mock) capture.");
         var capture = new FfmpegCaptureSource
         {
-            Width = session.Width,
-            Height = session.Height,
+            Layout = layout,
             Fps = session.Fps,
             LogFilePath = logPath,
         };
