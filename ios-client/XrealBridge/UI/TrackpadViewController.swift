@@ -12,6 +12,10 @@ final class TrackpadViewController: UIViewController {
     private let bridgeSession: BridgeSession
 
     private let statusLabel = UILabel()
+    /// Diagnostic-only, see EyeConnectivityProbe.swift -- surfaces whether the glasses' IMU/
+    /// control TCP endpoints are reachable over the current USB connection. Not part of the
+    /// bridge protocol; exists only because there's no Mac/Xcode here to read console output.
+    private let eyeProbeLabel = UILabel()
     private let keyboardButton = UIButton(type: .system)
     /// Effectively-invisible text field used purely to summon the system
     /// keyboard via becomeFirstResponder(); see the KeyInput extension
@@ -39,12 +43,14 @@ final class TrackpadViewController: UIViewController {
         view.backgroundColor = .black
 
         configureStatusLabel()
+        configureEyeProbeLabel()
         configureHiddenTextField()
         configureKeyboardButton()
         configureGestures()
 
         bridgeSession.statusDelegate = self
         updateStatusLabel(bridgeSession.status)
+        runEyeConnectivityProbe()
 
         if bridgeSession.pcHost.isEmpty {
             // First launch: prompt for the PC's IP right away since there's
@@ -76,6 +82,33 @@ final class TrackpadViewController: UIViewController {
             statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
         ])
+    }
+
+    private func configureEyeProbeLabel() {
+        eyeProbeLabel.translatesAutoresizingMaskIntoConstraints = false
+        eyeProbeLabel.textColor = .systemYellow
+        eyeProbeLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        eyeProbeLabel.textAlignment = .center
+        eyeProbeLabel.numberOfLines = 2
+        eyeProbeLabel.text = "Eye probe: checking 169.254.2.1..."
+        view.addSubview(eyeProbeLabel)
+        NSLayoutConstraint.activate([
+            eyeProbeLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 4),
+            eyeProbeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            eyeProbeLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+        ])
+    }
+
+    /// Runs once on launch (diagnostic, see EyeConnectivityProbe.swift) -- entirely independent
+    /// of the PC bridge connection, this only tests local phone<->glasses reachability.
+    private func runEyeConnectivityProbe() {
+        EyeConnectivityProbe.probeBoth { [weak self] stream, control in
+            guard let self = self else { return }
+            let streamText = "stream :\(stream.port) \(stream.reachable ? "REACHABLE" : "unreachable")"
+            let controlText = "control :\(control.port) \(control.reachable ? "REACHABLE" : "unreachable")"
+            self.eyeProbeLabel.text = "Eye probe -- \(streamText), \(controlText)"
+            self.eyeProbeLabel.textColor = (stream.reachable || control.reachable) ? .systemGreen : .systemYellow
+        }
     }
 
     private func configureHiddenTextField() {

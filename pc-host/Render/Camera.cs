@@ -3,12 +3,14 @@ using System.Numerics;
 namespace PcHost.Render;
 
 /// <summary>
-/// The scene's viewpoint. This is the clean interface point real 6DoF pose data (from the
-/// XREAL Eye, once its USB HID protocol is worked out -- blocked for now on a physical adapter
-/// cable) plugs into later: whatever drives the camera (manual keyboard control today, live pose
-/// data eventually) just sets <see cref="Position"/>/<see cref="Yaw"/>/<see cref="Pitch"/> each
-/// frame and the renderer doesn't need to know or care which. <see cref="ConsoleCameraController"/>
-/// is today's manual stand-in.
+/// The scene's viewpoint. This is the clean interface point live pose data plugs into: whatever
+/// drives the camera just sets <see cref="Position"/>/<see cref="Yaw"/>/<see cref="Pitch"/> each
+/// frame and the renderer doesn't need to know or care which. Two controllers exist today:
+/// <see cref="ConsoleCameraController"/> (manual WASD/arrow-key stand-in) and
+/// <see cref="XrealOneOrientationController"/> (real 3DoF orientation from the glasses' own IMU,
+/// via <see cref="XrealOneImuClient"/> -- UNVERIFIED against real hardware, see that class's doc
+/// comment). Full positional (6DoF) tracking would need the XREAL Eye's SLAM camera instead,
+/// which is a separate, harder problem (proprietary, Android-only SDK) not attempted here.
 /// </summary>
 public sealed class Camera
 {
@@ -94,5 +96,46 @@ public sealed class ConsoleCameraController
 
             keyAvailable = Console.KeyAvailable;
         }
+    }
+}
+
+/// <summary>
+/// Integrates live gyroscope samples from <see cref="XrealOneImuClient"/> into
+/// <see cref="Camera.Yaw"/>/<see cref="Camera.Pitch"/> -- the real-hardware replacement for
+/// <see cref="ConsoleCameraController"/>'s manual stand-in, once the glasses are actually
+/// connected. Call <see cref="OnSample"/> from the client's per-sample callback.
+///
+/// Two things flagged clearly because they can't be verified without real hardware:
+/// - Pure gyro integration, no accelerometer-based drift correction (no complementary/Madgwick
+///   filter pulling orientation back toward a gravity reference). Will drift over time; whether
+///   that's noticeable in practice, and whether it's worth the extra complexity to fix, can only
+///   be judged once tested for real.
+/// - The gyro axis -> yaw/pitch mapping below (X -> pitch, Y -> yaw) is a reasonable guess, not
+///   a confirmed fact -- XrealOneImuFrameParser's axis remap is ported from the reference
+///   implementation, but nothing here confirms which output axis is actually "turn your head
+///   left/right" versus "nod up/down" on this specific device. Expect to flip/swap axes once
+///   this is actually running against the glasses.
+/// </summary>
+public sealed class XrealOneOrientationController
+{
+    private float _yaw;
+    private float _pitch;
+    private ulong? _lastTimestampMicros;
+
+    public void OnSample(XrealOneImuFrameParser.Sample sample, Camera camera)
+    {
+        if (_lastTimestampMicros is ulong lastMicros && sample.TimestampMicros > lastMicros)
+        {
+            float dt = (sample.TimestampMicros - lastMicros) / 1_000_000f;
+            if (dt < 0.5f) // guard against a bogus/huge gap (reconnect, clock discontinuity)
+            {
+                _yaw += sample.Gyroscope.Y * dt;
+                _pitch += sample.Gyroscope.X * dt;
+            }
+        }
+        _lastTimestampMicros = sample.TimestampMicros;
+
+        camera.Yaw = _yaw;
+        camera.Pitch = Math.Clamp(_pitch, -MathF.PI / 2.1f, MathF.PI / 2.1f);
     }
 }
