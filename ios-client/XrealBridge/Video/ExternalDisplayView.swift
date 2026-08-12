@@ -16,6 +16,22 @@ import UIKit
 /// decoded `CVImageBuffer` for display is the standard documented
 /// approach, but has not been compiled or run.
 final class ExternalDisplayView: UIView, H264DecoderDelegate {
+    /// CONFIRMED LIVE ON REAL HARDWARE (glasses + phone bridge): the image on the glasses reads
+    /// mirrored left-right (vertically correct -- taskbar stays put -- but horizontally
+    /// backwards), and a device screenshot captures the same mirrored content, so this isn't a
+    /// screenshot-capture artifact or a glasses-optics illusion -- it's really in the pixel data
+    /// reaching the display layer. Nothing in this file (or H264Decoder.swift, or
+    /// SceneDelegate.swift) sets any transform anywhere, and the PC-side render pipeline has been
+    /// extensively verified as correct (non-mirrored) throughout this project, so the cause isn't
+    /// identifiable by static reading alone -- it needs an actual on-device test to narrow down.
+    ///
+    /// This flag exists to make that test a single toggle rather than a guess-and-recompile loop.
+    /// Currently ON to test the hypothesis on real hardware via the next sideload build -- if the
+    /// glasses now read correctly, this comment (and the flag) should collapse down to just "yes,
+    /// needed" with the mystery-diagnosis paragraph above trimmed out; if it makes things worse
+    /// (or does nothing), flip back to `false` and this stays an open question.
+    static let mirrorHorizontallyForExternalDisplay = true
+
     override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
 
     var displayLayer: AVSampleBufferDisplayLayer {
@@ -43,6 +59,15 @@ final class ExternalDisplayView: UIView, H264DecoderDelegate {
         // decides distortion-free full fill is preferred over accurate
         // aspect ratio.
         displayLayer.videoGravity = .resizeAspect
+
+        if Self.mirrorHorizontallyForExternalDisplay {
+            // A mirror-of-a-mirror is not a mirror: if the source is genuinely arriving
+            // horizontally flipped somewhere upstream of this layer, undoing it here (rather than
+            // hunting for the actual root cause blind, with no way to compile/test locally) is the
+            // pragmatic fix. CALayer.anchorPoint defaults to (0.5, 0.5) -- the layer's own center --
+            // so this scale flips the content in place rather than shifting it off-frame.
+            displayLayer.transform = CATransform3DMakeScale(-1, 1, 1)
+        }
     }
 
     func flush() {
