@@ -5,7 +5,10 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using Line = System.Windows.Shapes.Line;
+using Polygon = System.Windows.Shapes.Polygon;
 using PcHostGui.Models;
 using PcHostGui.Services;
 using Forms = System.Windows.Forms;
@@ -17,10 +20,22 @@ public partial class MainWindow : Window
 {
     private readonly GuiSettings _settings;
     private readonly GridConfig _grid;
+    private readonly SceneConfig _scene;
     private readonly BridgeProcessManager _bridge = new();
     private IReadOnlyList<MonitorSource> _detectedMonitors = Array.Empty<MonitorSource>();
     private Forms.NotifyIcon? _trayIcon;
     private bool _isExiting;
+
+    // ---------- Scene builder (3D drag-drop) state ----------
+    private const double ScenePxPerMeter = 55.0;
+    private const double SceneOriginX = 240.0;
+    private const double SceneOriginY = 270.0;
+    private readonly Dictionary<SceneObjectConfig, Border> _sceneVisuals = new();
+    private SceneObjectConfig? _selectedSceneObject;
+    private bool _isDraggingScenePanel;
+    private Point _dragStartMouse;
+    private float _dragStartPosX;
+    private float _dragStartPosZ;
 
     public MainWindow()
     {
@@ -28,6 +43,7 @@ public partial class MainWindow : Window
 
         _settings = SettingsStore.Load();
         _grid = _settings.Grid;
+        _scene = _settings.Scene;
 
         TileWidthBox.Text = _grid.TileWidth.ToString();
         TileHeightBox.Text = _grid.TileHeight.ToString();
@@ -38,6 +54,9 @@ public partial class MainWindow : Window
         VirtualHeightBox.Text = _settings.VirtualMonitorHeight.ToString();
         VirtualRefreshBox.Text = _settings.VirtualMonitorRefreshRate.ToString();
         PcHostPathBox.Text = string.IsNullOrEmpty(_settings.PcHostExePath) ? GuessPcHostPath() : _settings.PcHostExePath;
+        SceneWidthBox.Text = _scene.Width.ToString();
+        SceneHeightBox.Text = _scene.Height.ToString();
+        LayoutTabControl.SelectedIndex = _settings.UseSceneMode ? 1 : 0;
 
         _bridge.OutputReceived += line => Dispatcher.Invoke(() => AppendLog(line));
         _bridge.Exited += () => Dispatcher.Invoke(() =>
@@ -48,6 +67,7 @@ public partial class MainWindow : Window
         });
 
         RebuildMonitorGridPanel();
+        RebuildSceneCanvas();
         UpdateVddStatus();
         SetupTrayIcon();
 
@@ -104,6 +124,10 @@ public partial class MainWindow : Window
 
         RenderThumbnails();
         RebuildMonitorGridPanel(); // refresh dropdown choices with the newly scanned monitors
+        if (_selectedSceneObject is not null)
+        {
+            SelectSceneObject(_selectedSceneObject); // refresh the scene tab's source dropdown too
+        }
     }
 
     private void RenderThumbnails()
@@ -216,6 +240,310 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---------- Scene builder (3D drag-drop) ----------
+
+    /// <summary>
+    /// Redraws the whole top-down canvas from <see cref="_scene"/> -- same "clear and rebuild"
+    /// philosophy as <see cref="RebuildMonitorGridPanel"/>, since structural changes here (add/
+    /// remove/reassign) are infrequent. Live dragging instead moves an existing visual directly
+    /// (see <see cref="SceneCanvas_MouseMove"/>) rather than going through this, so drag capture
+    /// isn't disturbed mid-gesture.
+    /// </summary>
+    private void RebuildSceneCanvas()
+    {
+        SceneCanvas.Children.Clear();
+        _sceneVisuals.Clear();
+
+        for (int m = 1; m <= 4; m++)
+        {
+            double y = SceneOriginY - m * ScenePxPerMeter;
+            if (y < 0)
+            {
+                continue;
+            }
+
+            var line = new Line
+            {
+                X1 = 8,
+                X2 = SceneCanvas.Width - 8,
+                Y1 = y,
+                Y2 = y,
+                Stroke = Brushes.DimGray,
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 2, 4 },
+            };
+            SceneCanvas.Children.Add(line);
+
+            var label = new TextBlock { Text = $"{m}m", Foreground = Brushes.Gray, FontSize = 9 };
+            Canvas.SetLeft(label, 4);
+            Canvas.SetTop(label, y - 12);
+            SceneCanvas.Children.Add(label);
+        }
+
+        // Viewer marker: a fixed triangle at the world origin, pointing toward +Z (up the
+        // canvas) -- matches Camera's default position/facing (pc-host/Render/Camera.cs).
+        var viewer = new Polygon
+        {
+            Points = new PointCollection
+            {
+                new(SceneOriginX, SceneOriginY - 10),
+                new(SceneOriginX - 8, SceneOriginY + 6),
+                new(SceneOriginX + 8, SceneOriginY + 6),
+            },
+            Fill = Brushes.DeepSkyBlue,
+        };
+        SceneCanvas.Children.Add(viewer);
+
+        foreach (var obj in _scene.Objects)
+        {
+            var border = new Border
+            {
+                Width = Math.Max(20, obj.PanelWidth * ScenePxPerMeter),
+                Height = 16,
+                Background = obj.OutputIndex.HasValue ? Brushes.SteelBlue : Brushes.DarkRed,
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(2),
+                Cursor = Cursors.SizeAll,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+                RenderTransform = new RotateTransform(obj.YawDegrees),
+                Tag = obj,
+                Child = new TextBlock
+                {
+                    Text = obj.Label,
+                    Foreground = Brushes.White,
+                    FontSize = 9,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            };
+            border.MouseLeftButtonDown += SceneObjectVisual_MouseLeftButtonDown;
+
+            PositionSceneVisual(border, obj);
+            SceneCanvas.Children.Add(border);
+            _sceneVisuals[obj] = border;
+        }
+
+        UpdateSceneSelectionHighlight();
+    }
+
+    /// <summary>
+    /// World-to-canvas mapping: the viewer/camera sits at the world origin looking toward +Z
+    /// (pc-host/Render/Camera.cs's default), so +Z maps to "up the canvas" (decreasing screen Y)
+    /// and +X maps to "right" -- a top-down floor-plan view with the viewer at the bottom.
+    /// </summary>
+    private void PositionSceneVisual(Border border, SceneObjectConfig obj)
+    {
+        Canvas.SetLeft(border, SceneOriginX + obj.PosX * ScenePxPerMeter - border.Width / 2);
+        Canvas.SetTop(border, SceneOriginY - obj.PosZ * ScenePxPerMeter - border.Height / 2);
+    }
+
+    private void UpdateSceneSelectionHighlight()
+    {
+        foreach (var (obj, border) in _sceneVisuals)
+        {
+            bool selected = ReferenceEquals(obj, _selectedSceneObject);
+            border.BorderBrush = selected ? Brushes.Yellow : Brushes.White;
+            border.BorderThickness = new Thickness(selected ? 2.5 : 1);
+        }
+    }
+
+    private void AddSceneObject_Click(object sender, RoutedEventArgs e)
+    {
+        var obj = _scene.AddObject();
+        RebuildSceneCanvas();
+        SelectSceneObject(obj);
+    }
+
+    private void RemoveSceneObject_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedSceneObject is null)
+        {
+            return;
+        }
+
+        _scene.Objects.Remove(_selectedSceneObject);
+        _selectedSceneObject = null;
+        RebuildSceneCanvas();
+        ScenePropertiesPanel.IsEnabled = false;
+    }
+
+    private void SceneObjectVisual_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border border || border.Tag is not SceneObjectConfig obj)
+        {
+            return;
+        }
+
+        SelectSceneObject(obj);
+
+        _isDraggingScenePanel = true;
+        _dragStartMouse = e.GetPosition(SceneCanvas);
+        _dragStartPosX = obj.PosX;
+        _dragStartPosZ = obj.PosZ;
+        border.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void SceneCanvas_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDraggingScenePanel || _selectedSceneObject is null ||
+            !_sceneVisuals.TryGetValue(_selectedSceneObject, out var border))
+        {
+            return;
+        }
+
+        var current = e.GetPosition(SceneCanvas);
+        double dx = current.X - _dragStartMouse.X;
+        double dy = current.Y - _dragStartMouse.Y;
+
+        _selectedSceneObject.PosX = _dragStartPosX + (float)(dx / ScenePxPerMeter);
+        _selectedSceneObject.PosZ = _dragStartPosZ - (float)(dy / ScenePxPerMeter);
+
+        PositionSceneVisual(border, _selectedSceneObject);
+        ScenePosXBox.Text = _selectedSceneObject.PosX.ToString("0.00");
+        ScenePosZBox.Text = _selectedSceneObject.PosZ.ToString("0.00");
+    }
+
+    private void SceneCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isDraggingScenePanel && _selectedSceneObject is not null &&
+            _sceneVisuals.TryGetValue(_selectedSceneObject, out var border))
+        {
+            border.ReleaseMouseCapture();
+        }
+
+        _isDraggingScenePanel = false;
+    }
+
+    private void SelectSceneObject(SceneObjectConfig obj)
+    {
+        _selectedSceneObject = obj;
+        UpdateSceneSelectionHighlight();
+        ScenePropertiesPanel.IsEnabled = true;
+
+        SceneOutputCombo.SelectionChanged -= SceneOutputCombo_SelectionChanged;
+        SceneOutputCombo.Items.Clear();
+        SceneOutputCombo.Items.Add(new ComboBoxItem { Content = "-- unassigned --", Tag = null });
+        foreach (var mon in _detectedMonitors)
+        {
+            SceneOutputCombo.Items.Add(new ComboBoxItem { Content = mon.Label, Tag = mon.OutputIndex });
+        }
+        SceneOutputCombo.SelectedIndex = 0;
+        for (int i = 0; i < SceneOutputCombo.Items.Count; i++)
+        {
+            if (SceneOutputCombo.Items[i] is ComboBoxItem item && Equals(item.Tag, obj.OutputIndex))
+            {
+                SceneOutputCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        SceneOutputCombo.SelectionChanged += SceneOutputCombo_SelectionChanged;
+
+        ScenePanelWidthBox.Text = obj.PanelWidth.ToString("0.00");
+        ScenePanelHeightBox.Text = obj.PanelHeight.ToString("0.00");
+        ScenePosXBox.Text = obj.PosX.ToString("0.00");
+        ScenePosYBox.Text = obj.PosY.ToString("0.00");
+        ScenePosZBox.Text = obj.PosZ.ToString("0.00");
+        ScenePitchBox.Text = obj.PitchDegrees.ToString("0.0");
+        SceneRollBox.Text = obj.RollDegrees.ToString("0.0");
+
+        SceneCurvatureSlider.ValueChanged -= SceneCurvatureSlider_ValueChanged;
+        SceneCurvatureSlider.Value = obj.CurvatureDegrees;
+        SceneCurvatureSlider.ValueChanged += SceneCurvatureSlider_ValueChanged;
+        SceneCurvatureLabel.Text = $"Curvature: {obj.CurvatureDegrees:0} deg";
+
+        SceneYawSlider.ValueChanged -= SceneYawSlider_ValueChanged;
+        SceneYawSlider.Value = obj.YawDegrees;
+        SceneYawSlider.ValueChanged += SceneYawSlider_ValueChanged;
+        SceneYawLabel.Text = $"Yaw: {obj.YawDegrees:0} deg";
+    }
+
+    private void SceneOutputCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_selectedSceneObject is null || SceneOutputCombo.SelectedItem is not ComboBoxItem selected)
+        {
+            return;
+        }
+
+        _selectedSceneObject.OutputIndex = selected.Tag as int?;
+        RebuildSceneCanvas();
+    }
+
+    private void SceneCurvatureSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_selectedSceneObject is null)
+        {
+            return;
+        }
+
+        _selectedSceneObject.CurvatureDegrees = (float)e.NewValue;
+        SceneCurvatureLabel.Text = $"Curvature: {e.NewValue:0} deg";
+    }
+
+    private void SceneYawSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_selectedSceneObject is null)
+        {
+            return;
+        }
+
+        _selectedSceneObject.YawDegrees = (float)e.NewValue;
+        SceneYawLabel.Text = $"Yaw: {e.NewValue:0} deg";
+        if (_sceneVisuals.TryGetValue(_selectedSceneObject, out var border) && border.RenderTransform is RotateTransform rt)
+        {
+            rt.Angle = e.NewValue;
+        }
+    }
+
+    private void SceneNumericField_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (int.TryParse(SceneWidthBox.Text, out int cw))
+        {
+            _scene.Width = cw;
+        }
+        if (int.TryParse(SceneHeightBox.Text, out int ch))
+        {
+            _scene.Height = ch;
+        }
+
+        if (_selectedSceneObject is null)
+        {
+            return;
+        }
+
+        if (float.TryParse(ScenePanelWidthBox.Text, out float pw))
+        {
+            _selectedSceneObject.PanelWidth = pw;
+        }
+        if (float.TryParse(ScenePanelHeightBox.Text, out float ph))
+        {
+            _selectedSceneObject.PanelHeight = ph;
+        }
+        if (float.TryParse(ScenePosXBox.Text, out float px))
+        {
+            _selectedSceneObject.PosX = px;
+        }
+        if (float.TryParse(ScenePosYBox.Text, out float py))
+        {
+            _selectedSceneObject.PosY = py;
+        }
+        if (float.TryParse(ScenePosZBox.Text, out float pz))
+        {
+            _selectedSceneObject.PosZ = pz;
+        }
+        if (float.TryParse(ScenePitchBox.Text, out float pitch))
+        {
+            _selectedSceneObject.PitchDegrees = pitch;
+        }
+        if (float.TryParse(SceneRollBox.Text, out float roll))
+        {
+            _selectedSceneObject.RollDegrees = roll;
+        }
+
+        RebuildSceneCanvas();
+    }
+
     // ---------- Virtual monitors ----------
 
     private void UpdateVddStatus()
@@ -272,37 +600,77 @@ public partial class MainWindow : Window
 
     private void StartBridge_Click(object sender, RoutedEventArgs e)
     {
-        if (!_grid.IsComplete)
+        bool sceneMode = LayoutTabControl.SelectedIndex == 1;
+        _settings.UseSceneMode = sceneMode;
+
+        List<string> args;
+
+        if (sceneMode)
         {
-            MessageBox.Show(this, "Assign a monitor to every grid cell first.", "Grid incomplete", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            if (!_scene.IsComplete)
+            {
+                MessageBox.Show(this, "Assign a monitor source to every panel in the scene first.", "Scene incomplete", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // A JSON file, not more CLI flags, because a scene has an arbitrary number of
+            // objects each with several fields (position/rotation/curvature/size) -- doesn't
+            // fit a flat argument list the way the grid's single spec string does. See
+            // pc-host/Render/SceneFileFormat.cs for the format pc-host reads.
+            string sceneFilePath = Path.Combine(Path.GetTempPath(), "xrealbridge_scene.json");
+            try
+            {
+                File.WriteAllText(sceneFilePath, _scene.ToSceneFileJson());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to write scene file: {ex.Message}", "Failed to start", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            args = new List<string>
+            {
+                "--scene-file", sceneFilePath,
+                "--control-port", _settings.ControlPort.ToString(),
+                "--video-port", _settings.VideoPort.ToString(),
+                "--input-port", _settings.InputPort.ToString(),
+            };
+        }
+        else
+        {
+            if (!_grid.IsComplete)
+            {
+                MessageBox.Show(this, "Assign a monitor to every grid cell first.", "Grid incomplete", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!int.TryParse(TileWidthBox.Text, out int tw) || !int.TryParse(TileHeightBox.Text, out int th) ||
+                !int.TryParse(GapXBox.Text, out int gx) || !int.TryParse(GapYBox.Text, out int gy))
+            {
+                MessageBox.Show(this, "Enter valid numbers for tile size/gaps.", "Invalid input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _grid.TileWidth = tw;
+            _grid.TileHeight = th;
+            _grid.GapX = gx;
+            _grid.GapY = gy;
+
+            args = new List<string>
+            {
+                "--monitors", _grid.ToGridSpec(),
+                "--tile-width", tw.ToString(),
+                "--tile-height", th.ToString(),
+                "--gap-x", gx.ToString(),
+                "--gap-y", gy.ToString(),
+                "--control-port", _settings.ControlPort.ToString(),
+                "--video-port", _settings.VideoPort.ToString(),
+                "--input-port", _settings.InputPort.ToString(),
+            };
         }
 
-        if (!int.TryParse(TileWidthBox.Text, out int tw) || !int.TryParse(TileHeightBox.Text, out int th) ||
-            !int.TryParse(GapXBox.Text, out int gx) || !int.TryParse(GapYBox.Text, out int gy))
-        {
-            MessageBox.Show(this, "Enter valid numbers for tile size/gaps.", "Invalid input", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _grid.TileWidth = tw;
-        _grid.TileHeight = th;
-        _grid.GapX = gx;
-        _grid.GapY = gy;
         _settings.PcHostExePath = PcHostPathBox.Text;
         SettingsStore.Save(_settings);
-
-        var args = new List<string>
-        {
-            "--monitors", _grid.ToGridSpec(),
-            "--tile-width", tw.ToString(),
-            "--tile-height", th.ToString(),
-            "--gap-x", gx.ToString(),
-            "--gap-y", gy.ToString(),
-            "--control-port", _settings.ControlPort.ToString(),
-            "--video-port", _settings.VideoPort.ToString(),
-            "--input-port", _settings.InputPort.ToString(),
-        };
 
         try
         {

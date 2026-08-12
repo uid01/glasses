@@ -137,6 +137,7 @@ internal sealed class CliOptions
         int renderWidth = 1920;
         int renderHeight = 1080;
         float renderCurvatureDegrees = 0f;
+        string? sceneFilePath = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -207,12 +208,23 @@ internal sealed class CliOptions
                 case "--render-curvature" when i + 1 < args.Length:
                     renderCurvatureDegrees = float.Parse(args[++i]);
                     break;
+                // Full multi-object scene (arbitrary count, per-object position/rotation/
+                // curvature) as JSON -- see Render/SceneFileFormat.cs. This is what
+                // pc-host-gui's drag-drop 3D placement builder emits; it supersedes --render's
+                // single-hardcoded-panel flags when both are given.
+                case "--scene-file" when i + 1 < args.Length:
+                    sceneFilePath = args[++i];
+                    break;
             }
         }
 
         options.MonitorLayout = MonitorLayout.Parse(monitorsGridSpec, tileWidth, tileHeight, gapX, gapY);
 
-        if (render)
+        if (sceneFilePath is not null)
+        {
+            options.RenderScene = SceneFileLoader.Load(sceneFilePath);
+        }
+        else if (render)
         {
             options.RenderScene = new RenderSceneSpec
             {

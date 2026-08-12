@@ -26,6 +26,26 @@ public sealed class ControlServer : IDisposable
     public ControlServer(int controlPort, int videoPort, SessionManager sessions, VideoSender videoSender, bool mock, string logDirectory, MonitorLayout monitorLayout, RenderSceneSpec? renderScene = null)
     {
         _listener = new UdpClient(new IPEndPoint(IPAddress.Any, controlPort));
+
+        // Windows-specific UDP gotcha: if a send on this socket reaches a port nobody's
+        // listening on anymore (e.g. a client whose Handshake socket it already closed, but
+        // whose session hasn't hit the 5s sweep yet -- see SendHeartbeatTo below), the OS
+        // delivers an ICMP Port Unreachable back to *this* socket, and by default Winsock
+        // surfaces that as a SocketException (WSAECONNRESET) on the *next* ReceiveAsync call --
+        // for an unrelated client, killing the whole receive loop (see the catch clause in
+        // ReceiveLoopAsync, added as defense-in-depth for the same reason). SIO_UDP_CONNRESET
+        // disables that behavior so a gone client can never take every other client down with it.
+        const int SioUdpConnReset = -1744830452; // IOC_IN | IOC_VENDOR | 12
+        try
+        {
+            _listener.Client.IOControl(unchecked((int)SioUdpConnReset), new byte[] { 0 }, null);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // Non-Windows: this ioctl doesn't exist there, and the ICMP-triggers-WSAECONNRESET
+            // behavior it suppresses is Windows-specific anyway -- nothing to do.
+        }
+
         _videoPort = videoPort;
         _sessions = sessions;
         _videoSender = videoSender;
@@ -57,6 +77,14 @@ public sealed class ControlServer : IDisposable
             catch (ObjectDisposedException)
             {
                 break;
+            }
+            catch (SocketException)
+            {
+                // Belt-and-suspenders alongside the SIO_UDP_CONNRESET ioctl set in the
+                // constructor: a single client's send/receive hiccup (e.g. a gone client
+                // triggering the ICMP-port-unreachable behavior that ioctl is meant to suppress)
+                // must never take down the receive loop for every other connected client.
+                continue;
             }
 
             HandleDatagram(result.Buffer, result.RemoteEndPoint);
@@ -184,7 +212,15 @@ public sealed class ControlServer : IDisposable
         // its HandshakeAck. The ffmpeg path never surfaced this because Process.Start doesn't
         // block waiting for output, so this pre-existing risk was latent until render mode made
         // session startup genuinely slow.
-        session.PipelineTask = Task.Run(() => CapturePipeline.RunAsync(session, _videoSender, _mock, _logDirectory, session.PipelineCts.Token));
+        var pipelineTask = Task.Run(() => CapturePipeline.RunAsync(session, _videoSender, _mock, _logDirectory, session.PipelineCts.Token));
+        // Nothing else awaits this task promptly (SessionManager only does on teardown), so a
+        // synchronous failure early in the pipeline -- e.g. MonitorCapture.WarmUp failing for a
+        // bad output_idx -- would otherwise fault silently: no console output, no log entry, the
+        // client just never receives any video and has no way to know why. Surface it.
+        pipelineTask.ContinueWith(
+            t => Console.WriteLine($"[pipeline] session {sessionId} capture pipeline failed: {t.Exception?.GetBaseException().Message}"),
+            TaskContinuationOptions.OnlyOnFaulted);
+        session.PipelineTask = pipelineTask;
 
         var ack = new HandshakeAck
         {

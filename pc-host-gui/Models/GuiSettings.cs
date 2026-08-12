@@ -7,6 +7,14 @@ namespace PcHostGui.Models;
 public sealed class GuiSettings
 {
     public GridConfig Grid { get; set; } = new();
+    public SceneConfig Scene { get; set; } = new();
+
+    /// <summary>
+    /// Which layout tab was active last time the bridge was started -- remembered so the app
+    /// reopens on whichever mode the user was actually using instead of always defaulting back
+    /// to the grid.
+    /// </summary>
+    public bool UseSceneMode { get; set; }
 
     /// <summary>
     /// Path to PcHost.exe. Defaults to the sibling pc-host/ build output relative to this repo's

@@ -77,7 +77,21 @@ public static class CapturePipeline
             foreach (var objSpec in spec.Objects)
             {
                 var monitorCapture = new MonitorCapture(renderer.Device, renderer.Context, objSpec.OutputIndex);
-                monitorCapture.WarmUp();
+                try
+                {
+                    monitorCapture.WarmUp();
+                }
+                catch
+                {
+                    // WarmUp failed -- this capture never made it into `objects`, so the
+                    // `finally` below won't reach it. Dispose it here instead of leaking its
+                    // DXGI Desktop Duplication session, which would otherwise make every future
+                    // attempt to capture this same output fail too (only one duplication
+                    // session is allowed per output at a time -- see MonitorCapture's doc
+                    // comment), turning one bad monitor index into a permanent failure.
+                    monitorCapture.Dispose();
+                    throw;
+                }
 
                 objects.Add(new SceneObject
                 {
