@@ -51,9 +51,14 @@ public sealed class AnnexBFrameSplitter
     {
         var completed = new List<AnnexBFrame>();
 
-        foreach (var b in chunk)
+        // Bulk-copy, not a per-byte loop: this runs on every chunk of every H264 stream for the
+        // life of a session (up to 64KB per read, see FfmpegProcessUtil.PumpFramesAsync), and
+        // List<byte>.Add() in a tight loop pays a bounds check plus a possible resize on every
+        // single byte. AddRange(T[]) instead uses List<T>'s ICollection<T> fast path (one bulk
+        // Array.Copy).
+        if (chunk.Length > 0)
         {
-            _buf.Add(b);
+            _buf.AddRange(chunk.ToArray());
         }
 
         int i = _scanPos;

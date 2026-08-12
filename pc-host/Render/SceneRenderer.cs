@@ -120,6 +120,10 @@ public sealed class SceneRenderer : IDisposable
             new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0),
         }, vsBlob.Span);
 
+        // SamplerDescription has no bare constructor accepting named properties (a Vortice API
+        // shape found by trial and error -- see git history) -- PointWrap is just a convenient
+        // starting template here, every property that matters (Filter, AddressU/V/W) is
+        // overridden below to what this actually needs (bilinear, clamped).
         _sampler = Device.CreateSamplerState(SamplerDescription.PointWrap with
         {
             Filter = Filter.MinMagMipLinear,

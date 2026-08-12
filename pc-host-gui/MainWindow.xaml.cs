@@ -366,6 +366,27 @@ public partial class MainWindow : Window
         _selectedSceneObject = null;
         RebuildSceneCanvas();
         ScenePropertiesPanel.IsEnabled = false;
+        ClearScenePropertiesFields();
+    }
+
+    /// <summary>
+    /// Blanks the property panel's fields so a disabled panel doesn't keep showing the last
+    /// selected object's now-meaningless values.
+    /// </summary>
+    private void ClearScenePropertiesFields()
+    {
+        SceneOutputCombo.Items.Clear();
+        ScenePanelWidthBox.Text = string.Empty;
+        ScenePanelHeightBox.Text = string.Empty;
+        ScenePosXBox.Text = string.Empty;
+        ScenePosYBox.Text = string.Empty;
+        ScenePosZBox.Text = string.Empty;
+        ScenePitchBox.Text = string.Empty;
+        SceneRollBox.Text = string.Empty;
+        SceneCurvatureSlider.Value = 0;
+        SceneCurvatureLabel.Text = "Curvature: 0 deg";
+        SceneYawSlider.Value = 0;
+        SceneYawLabel.Text = "Yaw: 0 deg";
     }
 
     private void SceneObjectVisual_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

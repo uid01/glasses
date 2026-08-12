@@ -81,16 +81,16 @@ public static class CapturePipeline
                 {
                     monitorCapture.WarmUp();
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // WarmUp failed -- this capture never made it into `objects`, so the
-                    // `finally` below won't reach it. Dispose it here instead of leaking its
-                    // DXGI Desktop Duplication session, which would otherwise make every future
-                    // attempt to capture this same output fail too (only one duplication
-                    // session is allowed per output at a time -- see MonitorCapture's doc
-                    // comment), turning one bad monitor index into a permanent failure.
+                    // One bad monitor (a genuinely idle output, or two scene objects accidentally
+                    // pointed at the same output_idx -- only one duplication session is allowed
+                    // per output at a time, see MonitorCapture's doc comment) shouldn't take the
+                    // whole multi-monitor scene down with it. Log and render everything else;
+                    // only fail the session outright if nothing ends up capturable at all (below).
                     monitorCapture.Dispose();
-                    throw;
+                    Console.WriteLine($"[render] session {session.SessionId}: output_idx={objSpec.OutputIndex} unavailable, skipping this panel ({ex.Message})");
+                    continue;
                 }
 
                 objects.Add(new SceneObject
@@ -102,6 +102,12 @@ public static class CapturePipeline
                     Position = objSpec.Position,
                     RotationEuler = objSpec.RotationEuler,
                 });
+            }
+
+            if (objects.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Session {session.SessionId}: none of the {spec.Objects.Count} configured monitor(s) could be captured -- nothing to render.");
             }
 
             var renderedSource = new RenderedCaptureSource
