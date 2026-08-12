@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Deliberately NOT using ImplicitUsings: UseWPF + UseWindowsForms together each inject
+         their own implicit-usings set (System.Windows.* vs System.Windows.Forms/System.Drawing),
+         and several type names collide between them (MessageBox, Application, Control, ...).
+         Explicit usings in every file avoids that ambiguity entirely rather than fighting it
+         with per-call qualification. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WinForms pulled in only for the NotifyIcon (system tray) API, since WPF has no
+         first-party equivalent. Everything else in this app is plain WPF. -->
+    <RootNamespace>PcHostGui</RootNamespace>
+    <AssemblyName>PcHostGui</AssemblyName>
+    <ApplicationIcon />
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NOT InvariantGlobalization=true here, unlike pc-host.csproj. WPF's binding/layout
+         engine needs real culture data and throws InvalidOperationException
+         ("Cannot find non-neutral culture related to 'en-us'") on startup without it, confirmed
+         by hitting exactly that crash with it enabled. Fine for pc-host (a console app with no
+         UI framework), not fine here. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exclude the sibling test project's sources from this project's default glob -->
+    <Compile Remove="PcHostGui.Tests\**\*.cs" />
+    <Page Remove="PcHostGui.Tests\**\*.xaml" />
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
+  </ItemGroup>
+
+</Project>

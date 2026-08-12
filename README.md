@@ -23,6 +23,7 @@ into a wireless trackpad + keyboard for the PC.
 
 ```
 pc-host/            Windows service: screen capture, hardware encode, UDP streaming, input injection (C# / .NET 8)
+pc-host-gui/         Desktop config app: scan/arrange monitors visually, manage virtual monitors, start/stop the bridge (WPF / .NET 8)
 ios-client/          iPhone app: external display routing, decode, render, trackpad UI (Swift / Xcode project)
 shared-protocol/     PROTOCOL.md — the authoritative UDP wire format both sides implement against
 tests/               Cross-cutting mock/test tooling
@@ -54,6 +55,11 @@ dev machine — RTX 5070 Ti, driver 595.95 — see
 [`pc-host/README.md`](pc-host/README.md#encoder-fallback-nvenc---libx264)).
 Capture itself stays GPU-side (DXGI Desktop Duplication via ffmpeg's
 `ddagrab`) either way; only encode falls back to CPU.
+
+**Prefer a GUI over CLI flags?** [`pc-host-gui/`](pc-host-gui/README.md) is a desktop app that
+scans your real + virtual monitors (with real captured thumbnails, not guesses), lets you arrange
+them into a grid visually, manages [virtual monitors](pc-host/README.md#virtual-monitors), and
+starts/stops `pc-host` for you with a live log pane — `cd pc-host-gui && dotnet run`.
 
 ### 2. iOS client (requires a Mac + Xcode 16+ — not buildable from this repo alone)
 See [`ios-client/README.md`](ios-client/README.md) for full detail. Short version: open
