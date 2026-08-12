@@ -145,6 +145,41 @@ ffprobe-validated). Changing the virtual monitor count/resolutions requires edit
 reloading the driver (Device Manager disable/enable, or the VDC app's restart button) -- both need
 Administrator privileges.
 
+## GPU 3D compositor (curved monitors, arbitrary placement)
+
+The grid pipeline above ties every monitor to a rectangular cell in a shared grid, all cells the
+same size, no rotation, no curvature. `--render` switches to an alternate pipeline (`PcHost.Render`)
+that instead captures each monitor the same way (DXGI Desktop Duplication) but composites them
+itself on the GPU as textured meshes -- flat or cylindrically curved, placed and rotated anywhere
+in 3D, viewed through a virtual camera -- and hands ffmpeg only the final rendered frame to encode
+(`-f rawvideo` over stdin, no `ddagrab`/`filter_complex` involved on this path).
+
+Single-panel form, matching what today's CLI flags can express directly:
+
+```
+pc-host --render --render-monitor 0 --render-width 1920 --render-height 1080 --render-curvature 30
+```
+
+For more than one panel, or non-default position/rotation, use `--scene-file <path.json>` instead
+(supersedes `--render`'s flags if both are given) -- a JSON file describing an arbitrary number of
+objects, each with its own source monitor, size, curvature, position, and yaw/pitch/roll (degrees;
+converted to the radians the renderer actually uses at load time). See
+`pc-host/Render/SceneFileFormat.cs` for the exact shape. `pc-host-gui`'s "3D Scene" tab is a
+drag-drop builder that writes exactly this format and launches pc-host with it.
+
+The camera is currently driven by WASD + arrow keys read from the console (`ConsoleCameraController`)
+-- a manual stand-in until the XREAL Eye's onboard 6DoF pose is wired in (`Camera` is the intended
+plug-in point for that; see its doc comment). When pc-host has no interactive console attached to
+stdin (e.g. launched as a subprocess by `pc-host-gui`), camera polling silently disables itself
+after the first failed check rather than crashing the render loop.
+
+Verified end-to-end on real hardware: real `Handshake`/`HandshakeAck`, frames rendered and
+reassembled correctly (0 incomplete) for both a single flat panel and a curved+rotated+off-center
+panel driven by `--scene-file`, and `ffprobe`-validated as correct H264 at the requested resolution.
+Also verified via `pc-host-gui`: scanned real monitors, dragged a panel to a new position in the
+scene builder, assigned it a real source, started the bridge, and confirmed pc-host streamed from
+the resulting scene file.
+
 ## Real capture pipeline
 
 For a real (non-mock) session, the host launches (shown for a single monitor; `--monitors 0,1`
