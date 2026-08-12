@@ -25,6 +25,24 @@ public sealed class SceneConfig
     public bool IsComplete => Objects.Count > 0 && Objects.All(o => o.OutputIndex.HasValue);
 
     /// <summary>
+    /// Half the render camera's horizontal field of view, derived from pc-host's Camera default
+    /// vertical FOV (pc-host/Render/Camera.cs -- FieldOfViewRadians = MathF.PI / 2.2f, duplicated
+    /// here since this project doesn't reference pc-host's assembly for one constant) and this
+    /// scene's canvas aspect ratio, matching how Matrix4x4.CreatePerspectiveFieldOfView derives
+    /// horizontal FOV from vertical FOV + aspect. Used to warn when a placed panel falls outside
+    /// what the camera will actually render -- see <see cref="SceneObjectConfig.IsOutOfView"/>.
+    /// </summary>
+    public double HalfHorizontalFovRadians
+    {
+        get
+        {
+            const double verticalFov = Math.PI / 2.2;
+            double aspect = Height > 0 ? (double)Width / Height : 16.0 / 9.0;
+            return Math.Atan(Math.Tan(verticalFov / 2.0) * aspect);
+        }
+    }
+
+    /// <summary>
     /// A new panel placed a bit further back and to the side of whatever's already there, so
     /// repeated "+ Add Monitor" clicks fan panels out left-to-right instead of stacking them on
     /// top of each other. Purely a starting point -- the user drags/edits from there.
@@ -98,4 +116,27 @@ public sealed class SceneObjectConfig
     public float RollDegrees { get; set; }
 
     public string Label => OutputIndex.HasValue ? $"Monitor #{OutputIndex}" : "(unassigned)";
+
+    /// <summary>
+    /// True if any part of this panel's (unrotated) width falls outside the camera's horizontal
+    /// field of view at its own depth -- i.e. it would be partially or fully missing from the
+    /// rendered/streamed output even though it places fine in this 2D top-down editor. See
+    /// <see cref="SceneConfig.HalfHorizontalFovRadians"/> for how the angle is derived. Doesn't
+    /// account for yaw (a rotated panel's true screen-space extent is narrower than its unrotated
+    /// width, so this can over-warn slightly for a steeply-rotated panel) or vertical FOV/PosY
+    /// (not representable in a top-down view) -- a conservative, good-enough check for the
+    /// common case of panels spread out left-to-right.
+    /// </summary>
+    public bool IsOutOfView(double halfHorizontalFovRadians)
+    {
+        if (PosZ <= 0)
+        {
+            return true; // behind or at the camera -- never visible regardless of X.
+        }
+
+        double visibleHalfWidthAtZ = PosZ * Math.Tan(halfHorizontalFovRadians);
+        double left = PosX - PanelWidth / 2.0;
+        double right = PosX + PanelWidth / 2.0;
+        return left < -visibleHalfWidthAtZ || right > visibleHalfWidthAtZ;
+    }
 }

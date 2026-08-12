@@ -280,6 +280,30 @@ public partial class MainWindow : Window
             SceneCanvas.Children.Add(label);
         }
 
+        // Camera's field-of-view cone: what's actually visible in the rendered/streamed output.
+        // The 3D compositor (pc-host/Render/SceneRenderer.cs) uses a fixed camera at the world
+        // origin, and nothing before this stops a dragged panel from ending up partway or
+        // entirely outside it -- it would still place fine here and only turn out to be missing
+        // once actually viewed through the glasses. Drawing it, and flagging affected panels
+        // below, makes that visible while still editing instead of after streaming.
+        double halfHFov = _scene.HalfHorizontalFovRadians;
+        double coneLength = 6.0;
+        foreach (double sign in new[] { -1.0, 1.0 })
+        {
+            var coneLine = new Line
+            {
+                X1 = SceneOriginX,
+                Y1 = SceneOriginY,
+                X2 = SceneOriginX + sign * coneLength * Math.Sin(halfHFov) * ScenePxPerMeter,
+                Y2 = SceneOriginY - coneLength * Math.Cos(halfHFov) * ScenePxPerMeter,
+                Stroke = Brushes.OrangeRed,
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 4, 3 },
+                Opacity = 0.5,
+            };
+            SceneCanvas.Children.Add(coneLine);
+        }
+
         // Viewer marker: a fixed triangle at the world origin, pointing toward +Z (up the
         // canvas) -- matches Camera's default position/facing (pc-host/Render/Camera.cs).
         var viewer = new Polygon
@@ -300,7 +324,7 @@ public partial class MainWindow : Window
             {
                 Width = Math.Max(20, obj.PanelWidth * ScenePxPerMeter),
                 Height = 16,
-                Background = obj.OutputIndex.HasValue ? Brushes.SteelBlue : Brushes.DarkRed,
+                Background = SceneObjectFillBrush(obj, halfHFov),
                 BorderBrush = Brushes.White,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(2),
@@ -325,6 +349,16 @@ public partial class MainWindow : Window
         }
 
         UpdateSceneSelectionHighlight();
+    }
+
+    private static Brush SceneObjectFillBrush(SceneObjectConfig obj, double halfHFov)
+    {
+        if (obj.IsOutOfView(halfHFov))
+        {
+            return Brushes.DarkOrange;
+        }
+
+        return obj.OutputIndex.HasValue ? Brushes.SteelBlue : Brushes.DarkRed;
     }
 
     /// <summary>
@@ -422,6 +456,7 @@ public partial class MainWindow : Window
         _selectedSceneObject.PosZ = _dragStartPosZ - (float)(dy / ScenePxPerMeter);
 
         PositionSceneVisual(border, _selectedSceneObject);
+        border.Background = SceneObjectFillBrush(_selectedSceneObject, _scene.HalfHorizontalFovRadians);
         ScenePosXBox.Text = _selectedSceneObject.PosX.ToString("0.00");
         ScenePosZBox.Text = _selectedSceneObject.PosZ.ToString("0.00");
     }

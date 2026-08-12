@@ -119,4 +119,51 @@ public class SceneConfigTests
         obj.OutputIndex = 2;
         Assert.Equal("Monitor #2", obj.Label);
     }
+
+    /// <summary>
+    /// Regression test for a real bug found live: a panel dragged far enough off-center places
+    /// fine in the 2D top-down editor but falls outside the render camera's finite field of view
+    /// (pc-host/Render/Camera.cs), so it's partially or entirely missing once actually streamed --
+    /// with nothing in the editor warning about it. This locks down the geometry so a panel at
+    /// the default depth is flagged exactly when it should be.
+    /// </summary>
+    [Fact]
+    public void IsOutOfView_FalseForPanelWellWithinDefaultFov()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        var obj = new SceneObjectConfig { PosX = 0f, PosZ = 1.8f, PanelWidth = 1.78f };
+
+        Assert.False(obj.IsOutOfView(scene.HalfHorizontalFovRadians));
+    }
+
+    [Fact]
+    public void IsOutOfView_TrueForPanelDraggedFarOffCenter()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        // At z=1.8m the default ~114 deg horizontal FOV's visible half-width is ~2.77m --
+        // x=3.02 (a real leftover value observed live) is well outside that.
+        var obj = new SceneObjectConfig { PosX = 3.02f, PosZ = 1.8f, PanelWidth = 1.78f };
+
+        Assert.True(obj.IsOutOfView(scene.HalfHorizontalFovRadians));
+    }
+
+    [Fact]
+    public void IsOutOfView_TrueWhenBehindOrAtTheCamera()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        var obj = new SceneObjectConfig { PosX = 0f, PosZ = 0f };
+
+        Assert.True(obj.IsOutOfView(scene.HalfHorizontalFovRadians));
+    }
+
+    [Fact]
+    public void IsOutOfView_FarEnoughAwayMakesTheSameXVisibleAgain()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        // The same x that's out of view at z=1.8 (see above) becomes visible further back,
+        // since the camera's visible width grows with depth.
+        var obj = new SceneObjectConfig { PosX = 3.02f, PosZ = 6.0f, PanelWidth = 1.78f };
+
+        Assert.False(obj.IsOutOfView(scene.HalfHorizontalFovRadians));
+    }
 }

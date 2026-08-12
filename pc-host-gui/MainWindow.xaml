@@ -96,13 +96,26 @@
                 </TabItem>
 
                 <TabItem Header="2. 3D Scene (curved, drag-drop)">
+                    <!-- Child order matters here: DockPanel force-fills its LAST child with
+                         whatever space is left, regardless of that child's own Dock value. The
+                         Grid below (canvas + properties) is the one thing that should get that
+                         leftover space, so it's placed last, on purpose, same pattern as the Grid
+                         layout tab's ScrollViewer. The two fixed-height rows (toolbar, canvas
+                         size) come before it so they just take their own natural compact height. -->
                     <DockPanel Background="#1e1e1e">
                         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
                             <Button Content="+ Add Monitor" Click="AddSceneObject_Click"/>
                             <Button Content="- Remove Selected" Click="RemoveSceneObject_Click"/>
-                            <TextBlock Text="Drag panels to place them. Top-down view: you (the viewer) face up the screen." VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="Drag panels to place them. Orange dashed lines = camera's field of view; orange panel = outside it, won't show up in the stream." VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.7" FontSize="11" TextWrapping="Wrap"/>
                         </StackPanel>
-                        <Grid DockPanel.Dock="Top">
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,4,4,0">
+                            <TextBlock Text="Canvas size:" VerticalAlignment="Center"/>
+                            <TextBox x:Name="SceneWidthBox" Width="60" Text="1920" LostFocus="SceneNumericField_LostFocus"/>
+                            <TextBlock Text="x" VerticalAlignment="Center"/>
+                            <TextBox x:Name="SceneHeightBox" Width="60" Text="1080" LostFocus="SceneNumericField_LostFocus"/>
+                            <TextBlock Text="(the composited stream's resolution, not any one panel's)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.7" FontSize="11"/>
+                        </StackPanel>
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="200"/>
@@ -142,13 +155,6 @@
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,4,4,0">
-                            <TextBlock Text="Canvas size:" VerticalAlignment="Center"/>
-                            <TextBox x:Name="SceneWidthBox" Width="60" Text="1920" LostFocus="SceneNumericField_LostFocus"/>
-                            <TextBlock Text="x" VerticalAlignment="Center"/>
-                            <TextBox x:Name="SceneHeightBox" Width="60" Text="1080" LostFocus="SceneNumericField_LostFocus"/>
-                            <TextBlock Text="(the composited stream's resolution, not any one panel's)" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0.7" FontSize="11"/>
-                        </StackPanel>
                     </DockPanel>
                 </TabItem>
             </TabControl>
