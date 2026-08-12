@@ -35,6 +35,7 @@ public sealed class MonitorCapture : IDisposable
     private ID3D11Texture2D? _srvTexture;
     private ID3D11ShaderResourceView? _srv;
     private bool _warmedUp;
+    private DateTime _lastTransientFailureLogUtc = DateTime.MinValue;
 
     public int OutputIndex { get; }
     public uint Width { get; private set; }
@@ -90,6 +91,11 @@ public sealed class MonitorCapture : IDisposable
                 {
                     continue;
                 }
+                if (IsTransientCaptureFailure(result.Code))
+                {
+                    LogTransientFailureRateLimited(result.Code);
+                    continue;
+                }
                 result.CheckError();
             }
 
@@ -118,7 +124,9 @@ public sealed class MonitorCapture : IDisposable
     /// Non-blocking-ish poll (a single short AcquireNextFrame call) for a new frame. Returns
     /// true if the texture was updated, false if the screen hasn't changed since the last call
     /// (in which case the existing <see cref="ShaderResourceView"/> is still valid and unchanged
-    /// -- this is normal and expected on every tick where nothing on that monitor moved).
+    /// -- this is normal and expected on every tick where nothing on that monitor moved) OR if a
+    /// known-transient capture failure was hit (see <see cref="IsTransientCaptureFailure"/>) --
+    /// either way, the caller should just keep going and try again next tick.
     /// </summary>
     public bool TryUpdate(int timeoutMs = 0)
     {
@@ -129,6 +137,13 @@ public sealed class MonitorCapture : IDisposable
             {
                 return false;
             }
+
+            if (IsTransientCaptureFailure(result.Code))
+            {
+                LogTransientFailureRateLimited(result.Code);
+                return false;
+            }
+
             result.CheckError();
         }
 
@@ -139,6 +154,30 @@ public sealed class MonitorCapture : IDisposable
         _duplication.ReleaseFrame();
         _warmedUp = true;
         return true;
+    }
+
+    // E_ACCESSDENIED (0x80070005). Confirmed live: applying a virtual-monitor config change
+    // mid-session (which triggers an elevated UAC prompt to reload the driver, see
+    // pc-host-gui's VirtualMonitorConfig.ReloadDriverAsync) puts Windows on the "secure
+    // desktop" for the prompt's duration, during which desktop duplication legitimately can't
+    // capture anything -- AcquireNextFrame fails with this exact code, not a real error.
+    // Previously this uncaught exception crashed the ENTIRE render loop (every monitor in the
+    // scene, not just the one mid-reload) for the rest of the session. It clears up on its own
+    // once the prompt/reload finishes, so it's treated exactly like WaitTimeout: no new frame
+    // this tick, keep the existing texture, try again next tick.
+    private const int AccessDeniedHResult = unchecked((int)0x80070005);
+
+    private static bool IsTransientCaptureFailure(int hresult) => hresult == AccessDeniedHResult;
+
+    private void LogTransientFailureRateLimited(int hresult)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastTransientFailureLogUtc < TimeSpan.FromSeconds(2))
+        {
+            return; // this can fail on every tick for as long as a UAC prompt is up -- don't spam
+        }
+        _lastTransientFailureLogUtc = now;
+        Console.WriteLine($"[render] output_idx={OutputIndex}: transient capture failure (0x{hresult:X8}), skipping frame(s) until it clears");
     }
 
     private void UpdateFromResource(IDXGIResource resource)
