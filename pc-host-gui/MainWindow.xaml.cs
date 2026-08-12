@@ -403,6 +403,18 @@ public partial class MainWindow : Window
         ClearScenePropertiesFields();
     }
 
+    private void AutoArrangeScene_Click(object sender, RoutedEventArgs e)
+    {
+        _scene.AutoArrangeInView();
+        RebuildSceneCanvas();
+        if (_selectedSceneObject is not null)
+        {
+            // Position/yaw fields need refreshing to reflect the new placement; re-selecting is
+            // the existing, already-correct way to repopulate the whole property panel.
+            SelectSceneObject(_selectedSceneObject);
+        }
+    }
+
     /// <summary>
     /// Blanks the property panel's fields so a disabled panel doesn't keep showing the last
     /// selected object's now-meaningless values.

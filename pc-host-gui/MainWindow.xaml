@@ -106,6 +106,7 @@
                         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
                             <Button Content="+ Add Monitor" Click="AddSceneObject_Click"/>
                             <Button Content="- Remove Selected" Click="RemoveSceneObject_Click"/>
+                            <Button Content="Auto-Arrange" Click="AutoArrangeScene_Click" ToolTip="Repositions every monitor into an evenly-spaced, camera-facing arc. Fixes &quot;far away and small&quot; -- doesn't touch size, curvature, or assignment."/>
                             <TextBlock Text="Drag panels to place them. Orange dashed lines = camera's field of view; orange panel = outside it, won't show up in the stream." VerticalAlignment="Center" Margin="10,0,0,0" Opacity="0.7" FontSize="11" TextWrapping="Wrap"/>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,4,4,0">

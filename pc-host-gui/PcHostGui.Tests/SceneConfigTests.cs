@@ -166,4 +166,101 @@ public class SceneConfigTests
 
         Assert.False(obj.IsOutOfView(scene.HalfHorizontalFovRadians));
     }
+
+    /// <summary>
+    /// Regression coverage for the "everything looks far away and small" complaint found live
+    /// with a real 4-monitor scene: panels placed too far back and left parallel (rather than
+    /// angled inward) present themselves increasingly edge-on off to the sides.
+    /// </summary>
+    [Fact]
+    public void AutoArrangeInView_PlacesEveryPanelWellWithinTheFov()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        for (int i = 0; i < 4; i++)
+        {
+            scene.AddObject();
+        }
+
+        scene.AutoArrangeInView();
+
+        Assert.All(scene.Objects, obj => Assert.False(obj.IsOutOfView(scene.HalfHorizontalFovRadians)));
+    }
+
+    [Fact]
+    public void AutoArrangeInView_OrdersPanelsLeftToRightMatchingListOrder()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        scene.AddObject();
+        scene.AddObject();
+        scene.AddObject();
+
+        scene.AutoArrangeInView();
+
+        // Index 0 should end up leftmost (most negative X), index 2 rightmost.
+        Assert.True(scene.Objects[0].PosX < scene.Objects[1].PosX);
+        Assert.True(scene.Objects[1].PosX < scene.Objects[2].PosX);
+    }
+
+    [Fact]
+    public void AutoArrangeInView_AnglesOffCenterPanelsToFaceTheCamera()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        scene.AddObject();
+        scene.AddObject();
+
+        scene.AutoArrangeInView();
+
+        // Two panels split the FOV symmetrically around center: one goes negative-X (yaw should
+        // also be negative, i.e. turned right, to face back toward the origin) and one
+        // positive-X (yaw positive, turned left) -- neither should be left at yaw 0 (parallel).
+        var left = scene.Objects[0];
+        var right = scene.Objects[1];
+        Assert.True(left.PosX < 0);
+        Assert.True(left.YawDegrees < 0);
+        Assert.True(right.PosX > 0);
+        Assert.True(right.YawDegrees > 0);
+    }
+
+    [Fact]
+    public void AutoArrangeInView_SingleObject_PlacedDirectlyAheadWithNoYaw()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        scene.AddObject();
+
+        scene.AutoArrangeInView();
+
+        Assert.Equal(0f, scene.Objects[0].PosX, 3);
+        Assert.Equal(0f, scene.Objects[0].YawDegrees, 3);
+        Assert.True(scene.Objects[0].PosZ > 0);
+    }
+
+    [Fact]
+    public void AutoArrangeInView_DoesNotTouchSizeCurvatureOrAssignment()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+        var obj = scene.AddObject();
+        obj.OutputIndex = 3;
+        obj.PanelWidth = 2.5f;
+        obj.PanelHeight = 1.4f;
+        obj.CurvatureDegrees = 30f;
+        obj.PosY = 0.2f;
+
+        scene.AutoArrangeInView();
+
+        Assert.Equal(3, scene.Objects[0].OutputIndex);
+        Assert.Equal(2.5f, scene.Objects[0].PanelWidth);
+        Assert.Equal(1.4f, scene.Objects[0].PanelHeight);
+        Assert.Equal(30f, scene.Objects[0].CurvatureDegrees);
+        Assert.Equal(0.2f, scene.Objects[0].PosY);
+    }
+
+    [Fact]
+    public void AutoArrangeInView_NoObjects_DoesNothing()
+    {
+        var scene = new SceneConfig { Width = 1920, Height = 1080 };
+
+        scene.AutoArrangeInView(); // should not throw
+
+        Assert.Empty(scene.Objects);
+    }
 }

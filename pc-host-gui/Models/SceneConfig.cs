@@ -60,6 +60,39 @@ public sealed class SceneConfig
     }
 
     /// <summary>
+    /// Repositions every object into a comfortable, evenly-spaced arc directly in front of the
+    /// viewer, each one angled to face back toward the camera -- the fix for "everything looks
+    /// far away and small": panels placed too far back, and/or left parallel to each other
+    /// (rather than angled inward) so ones off to the side present themselves increasingly
+    /// edge-on -- both compound as more panels get spread out. Overwrites Position and Yaw for
+    /// every object in the scene; doesn't touch size, curvature, elevation, or source
+    /// assignment. Order preserved from <see cref="Objects"/> (index 0 goes leftmost).
+    /// </summary>
+    public void AutoArrangeInView(float distanceMeters = 1.2f, float usedFovFraction = 0.7f)
+    {
+        if (Objects.Count == 0)
+        {
+            return;
+        }
+
+        double halfFov = HalfHorizontalFovRadians * usedFovFraction;
+        double slice = (halfFov * 2.0) / Objects.Count;
+
+        for (int i = 0; i < Objects.Count; i++)
+        {
+            double angle = -halfFov + slice * (i + 0.5);
+            var obj = Objects[i];
+            obj.PosX = (float)(distanceMeters * Math.Sin(angle));
+            obj.PosZ = (float)(distanceMeters * Math.Cos(angle));
+            // Facing back toward the origin (camera): the same angle used to place it also
+            // happens to be the yaw that turns its face inward, rather than leaving every panel
+            // parallel (which is correct for the one directly ahead, but presents everything
+            // off to the side increasingly edge-on as it gets further from center).
+            obj.YawDegrees = (float)(angle * 180.0 / Math.PI);
+        }
+    }
+
+    /// <summary>
     /// Builds pc-host's <c>--scene-file</c> JSON. Throws if any object still lacks an assigned
     /// monitor -- callers should check <see cref="IsComplete"/> first and surface that to the
     /// user rather than relying on this exception for UI flow (same pattern as
