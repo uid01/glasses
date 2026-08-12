@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using PcHost.Capture;
+using PcHost.Render;
 
 namespace PcHost.Session;
 
@@ -38,6 +39,14 @@ public sealed class SessionInfo
     /// HandshakeAck, independent of how the host produces the pixels.
     /// </summary>
     public MonitorLayout? Layout { get; init; }
+
+    /// <summary>
+    /// If set, this session uses the GPU 3D compositor (<see cref="RenderedCaptureSource"/> --
+    /// curved surfaces, arbitrary placement) instead of the ddagrab+filter_complex pipeline
+    /// (<see cref="Layout"/>). Mutually exclusive with <see cref="Layout"/> in practice, though
+    /// nothing enforces that at this type's level -- whichever CapturePipeline checks first wins.
+    /// </summary>
+    public RenderSceneSpec? RenderScene { get; init; }
 
     /// <summary>
     /// True only for the synthetic session `--mock` mode auto-starts without a real Handshake

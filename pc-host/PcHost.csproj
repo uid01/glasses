@@ -19,4 +19,16 @@
     <Compile Remove="obj\**" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Render/ (curved-monitor 3D compositor): validated first in tools/render-probe against
+         real hardware before porting here. See that probe's git history for the debugging trail
+         (frame-discard timing, curvature sign convention, cull mode) that produced this working
+         code. Vortice.Mathematics deliberately not pinned; resolves transitively from
+         Vortice.Direct3D11 to avoid a net8.0 incompatibility (an explicit pin resolved to a
+         Vortice.Mathematics version that turned out to only support net9.0+). -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+  </ItemGroup>
+
 </Project>

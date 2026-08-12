@@ -103,7 +103,7 @@ public sealed class FfmpegCaptureSource
 
         // Drain stderr on a background task so ffmpeg (which is chatty on stderr) never blocks
         // on a full pipe. Write everything to a per-session log file.
-        _ = Task.Run(() => DrainStderrAsync(process));
+        _ = Task.Run(() => FfmpegProcessUtil.DrainStderrAsync(process, LogFilePath));
 
         return process;
     }
@@ -216,65 +216,7 @@ public sealed class FfmpegCaptureSource
         return sb.ToString();
     }
 
-    private async Task DrainStderrAsync(Process process)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogFilePath)!);
-            await using var log = new StreamWriter(LogFilePath, append: false) { AutoFlush = true };
-            string? line;
-            while ((line = await process.StandardError.ReadLineAsync()) is not null)
-            {
-                await log.WriteLineAsync(line);
-                if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine($"[ffmpeg:stderr] {line}");
-                }
-            }
-        }
-        catch
-        {
-            // Process likely exited/killed while draining; nothing more to do.
-        }
-    }
-
-    /// <summary>
-    /// Reads ffmpeg's stdout until EOF (process exit) or cancellation, invoking
-    /// <paramref name="onFrame"/> for each completed Annex-B access unit.
-    /// </summary>
-    public async Task PumpFramesAsync(Process process, Action<AnnexBFrame> onFrame, CancellationToken ct)
-    {
-        var splitter = new AnnexBFrameSplitter();
-        var buffer = new byte[65536];
-        var stdout = process.StandardOutput.BaseStream;
-
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                int read = await stdout.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-                if (read == 0)
-                {
-                    break; // EOF: ffmpeg exited or closed stdout.
-                }
-
-                foreach (var frame in splitter.Feed(buffer.AsSpan(0, read)))
-                {
-                    onFrame(frame);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // expected on shutdown
-        }
-        finally
-        {
-            var trailing = splitter.Flush();
-            if (trailing is not null)
-            {
-                onFrame(trailing);
-            }
-        }
-    }
+    /// <summary>Reads ffmpeg's stdout, parses Annex-B frames -- see <see cref="FfmpegProcessUtil.PumpFramesAsync"/>.</summary>
+    public Task PumpFramesAsync(Process process, Action<AnnexBFrame> onFrame, CancellationToken ct)
+        => FfmpegProcessUtil.PumpFramesAsync(process, onFrame, ct);
 }

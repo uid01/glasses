@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using PcHost.Capture;
 using PcHost.Protocol;
+using PcHost.Render;
 using PcHost.Session;
 
 namespace PcHost.Network;
@@ -19,9 +20,10 @@ public sealed class ControlServer : IDisposable
     private readonly bool _mock;
     private readonly string _logDirectory;
     private readonly MonitorLayout _monitorLayout;
+    private readonly RenderSceneSpec? _renderScene;
     private long _nextSessionIdCounter = Random.Shared.Next(1, int.MaxValue);
 
-    public ControlServer(int controlPort, int videoPort, SessionManager sessions, VideoSender videoSender, bool mock, string logDirectory, MonitorLayout monitorLayout)
+    public ControlServer(int controlPort, int videoPort, SessionManager sessions, VideoSender videoSender, bool mock, string logDirectory, MonitorLayout monitorLayout, RenderSceneSpec? renderScene = null)
     {
         _listener = new UdpClient(new IPEndPoint(IPAddress.Any, controlPort));
         _videoPort = videoPort;
@@ -30,6 +32,7 @@ public sealed class ControlServer : IDisposable
         _mock = mock;
         _logDirectory = logDirectory;
         _monitorLayout = monitorLayout;
+        _renderScene = renderScene;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -147,8 +150,8 @@ public sealed class ControlServer : IDisposable
         // screens and what layout" is a host-side decision by design (the whole point is the PC
         // drives monitor creation/layout; the client is just a display+input gateway). fps stays
         // fixed at 60 for now -- no client has ever needed anything else in practice.
-        ushort width = (ushort)_monitorLayout.CanvasWidth;
-        ushort height = (ushort)_monitorLayout.CanvasHeight;
+        ushort width = (ushort)(_renderScene?.Width ?? _monitorLayout.CanvasWidth);
+        ushort height = (ushort)(_renderScene?.Height ?? _monitorLayout.CanvasHeight);
         const byte fps = 60;
         const byte chosenCodec = 0; // H264 only; HEVC encode path is not implemented in this MVP.
 
@@ -164,11 +167,24 @@ public sealed class ControlServer : IDisposable
             Height = height,
             Fps = fps,
             Codec = chosenCodec,
-            Layout = _mock ? null : _monitorLayout,
+            Layout = _mock || _renderScene is not null ? null : _monitorLayout,
+            RenderScene = _mock ? null : _renderScene,
         };
 
         _sessions.Add(session);
-        session.PipelineTask = CapturePipeline.RunAsync(session, _videoSender, _mock, _logDirectory, session.PipelineCts.Token);
+        // Task.Run, not a direct call: CapturePipeline.RunAsync's render-mode branch does real
+        // synchronous work before its first await (D3D device creation, shader compilation,
+        // MonitorCapture.WarmUp's blocking frame-acquisition loop -- can take over a second).
+        // Since ReceiveLoopAsync calls HandleDatagram/HandleHandshake synchronously, that work
+        // would otherwise run inline on the control server's single receive-loop thread, both
+        // delaying the HandshakeAck below and blocking the loop from processing anything else in
+        // the meantime. Confirmed by hitting exactly this: a real handshake test received a
+        // stray Heartbeat (from the concurrently-running SendHeartbeatsLoopAsync, which had no
+        // trouble reaching the newly-added session mid-blocking-window) before ever receiving
+        // its HandshakeAck. The ffmpeg path never surfaced this because Process.Start doesn't
+        // block waiting for output, so this pre-existing risk was latent until render mode made
+        // session startup genuinely slow.
+        session.PipelineTask = Task.Run(() => CapturePipeline.RunAsync(session, _videoSender, _mock, _logDirectory, session.PipelineCts.Token));
 
         var ack = new HandshakeAck
         {
@@ -185,7 +201,8 @@ public sealed class ControlServer : IDisposable
         ack.WriteTo(buffer);
         _listener.Send(buffer, remoteEndPoint);
 
-        Console.WriteLine($"[control] session {sessionId} accepted from {remoteEndPoint} -> {width}x{height}@{fps} codec={chosenCodec} ({_monitorLayout.MonitorCount} monitor(s), {(_mock ? "mock" : "ffmpeg")})");
+        string modeDescription = _mock ? "mock" : _renderScene is not null ? $"rendered, {_renderScene.Objects.Count} object(s)" : $"ffmpeg, {_monitorLayout.MonitorCount} monitor(s)";
+        Console.WriteLine($"[control] session {sessionId} accepted from {remoteEndPoint} -> {width}x{height}@{fps} codec={chosenCodec} ({modeDescription})");
     }
 
     public void Dispose() => _listener.Dispose();
