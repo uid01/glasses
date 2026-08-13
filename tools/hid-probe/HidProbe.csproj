@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Throwaway diagnostic tool, not part of the shipped product: empirically probes the XREAL
+       1S + Eye's raw USB HID reports (VID 0x3318 / PID 0x043E) to reverse-engineer the sensor
+       report structure, since the known open-source XREAL drivers (ar-drivers-rs) document byte
+       offsets only for older Air-series PIDs (0x0424/0x0428/0x0432/0x0426), not this one. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HidProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HidSharp" Version="2.1.0" />
+  </ItemGroup>
+
+</Project>

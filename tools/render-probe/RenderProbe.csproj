@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Throwaway diagnostic tool: validates the core technical bet for the curved-monitor/3D
+       compositor work before touching the real pipeline, namely whether Vortice.Windows can do
+       DXGI Desktop Duplication capture, D3D11 render-to-texture with a simple shader, and CPU
+       readback, all working correctly in this environment. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>RenderProbe</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Vortice.Mathematics deliberately not pinned here: letting it resolve transitively from
+         Vortice.Direct3D11 avoided a net8.0 incompatibility hit from pinning an explicit version
+         that turned out to only support net9.0+. -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+  </ItemGroup>
+
+</Project>
